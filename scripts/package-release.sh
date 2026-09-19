@@ -13,8 +13,6 @@ INFO_PLIST="$APP_DIR/Contents/Info.plist"
 if [[ -n "${LUCKYSQL_BINARY:-}" ]]; then
     BINARY_PATH="$LUCKYSQL_BINARY"
 else
-    DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
-    export DEVELOPER_DIR
     swift build --package-path "$REPO_ROOT" -c release --arch arm64
     BINARY_PATH="$(swift build --package-path "$REPO_ROOT" -c release --arch arm64 --show-bin-path)/$APP_NAME"
 fi
