@@ -15,7 +15,14 @@ struct DatabaseSchema: Identifiable, Hashable {
     var id: String { name }
     let name: String
     var tables: [DatabaseTable] = []
-    var isLoaded = false
+    var tableLoadState: MetadataLoadState = .idle
+}
+
+enum MetadataLoadState: Hashable {
+    case idle
+    case loading
+    case loaded
+    case failed(String)
 }
 
 struct DatabaseTable: Identifiable, Hashable {
@@ -49,5 +56,12 @@ enum SQLIdentifier {
     static func quote(_ value: String) throws -> String {
         guard !value.isEmpty, !value.contains("\0") else { throw DatabaseError.invalidIdentifier(value) }
         return "`\(value.replacingOccurrences(of: "`", with: "``"))`"
+    }
+}
+
+enum SQLStringLiteral {
+    static func quote(_ value: String) throws -> String {
+        guard !value.contains("\0") else { throw DatabaseError.invalidIdentifier(value) }
+        return "'\(value.replacingOccurrences(of: "'", with: "''"))'"
     }
 }

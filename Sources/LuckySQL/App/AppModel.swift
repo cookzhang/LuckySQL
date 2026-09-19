@@ -13,11 +13,15 @@ final class AppModel: ObservableObject {
     @Published var isConnected = false
     @Published var isRunning = false
     @Published var errorMessage: String?
+    @Published var connectedProfileID: UUID?
+    @Published var connectingProfileID: UUID?
+    @Published var schemaLoadState: MetadataLoadState = .idle
 
     private let profileStore: ProfileStore
     private let keychain: PasswordStoring
     private let driver: any DatabaseDriver
     private var session: (any DatabaseSession)?
+    private var connectionAttemptID: UUID?
 
     init(profileStore: ProfileStore? = nil, keychain: PasswordStoring = KeychainStore(), driver: any DatabaseDriver = MySQLDriver()) {
         let profileStore = profileStore ?? ProfileStore()
@@ -45,6 +49,7 @@ final class AppModel: ObservableObject {
 
     func deleteSelectedProfile() {
         guard let id = selectedProfileID else { return }
+        if connectedProfileID == id || connectingProfileID == id { disconnect() }
         Task { try? keychain.deletePassword(for: id) }
         profiles.removeAll { $0.id == id }
         if profiles.isEmpty { profiles = [.local] }
@@ -57,39 +62,86 @@ final class AppModel: ObservableObject {
         selectedProfileID = id; loadPassword()
     }
 
-    func connect() {
+    func connect(to profileID: UUID? = nil) {
+        if let profileID { selectProfile(profileID) }
         guard let profile = selectedProfile else { return }
-        isRunning = true; errorMessage = nil
+        let attemptID = UUID()
+        connectionAttemptID = attemptID
+        connectingProfileID = profile.id
+        connectedProfileID = nil
+        isConnected = false
+        isRunning = true
+        errorMessage = nil
+        schemas = []
+        schemaLoadState = .loading
         Task {
             do {
-                await session?.close()
+                let previousSession = session
+                session = nil
+                await previousSession?.close()
                 try keychain.save(password, for: profile.id)
-                session = try await driver.connect(profile: profile, password: password)
+                let newSession = try await driver.connect(profile: profile, password: password)
+                guard connectionAttemptID == attemptID else {
+                    await newSession.close()
+                    return
+                }
+                session = newSession
+                connectedProfileID = profile.id
+                connectingProfileID = nil
                 isConnected = true
                 await loadSchemas()
-            } catch { show(error) }
-            isRunning = false
+            } catch {
+                guard connectionAttemptID == attemptID else { return }
+                connectingProfileID = nil
+                connectedProfileID = nil
+                schemaLoadState = .failed(error.localizedDescription)
+                show(error)
+            }
+            if connectionAttemptID == attemptID { isRunning = false }
         }
     }
 
     func disconnect() {
-        Task { await session?.close(); session = nil; isConnected = false; schemas = []; result = .empty }
+        connectionAttemptID = nil
+        connectingProfileID = nil
+        connectedProfileID = nil
+        isConnected = false
+        isRunning = false
+        schemas = []
+        schemaLoadState = .idle
+        result = .empty
+        let sessionToClose = session
+        session = nil
+        Task { await sessionToClose?.close() }
     }
 
     func loadSchemas() async {
-        do { schemas = try await requireSession().schemas().map { DatabaseSchema(name: $0) } }
-        catch { show(error) }
+        schemaLoadState = .loading
+        do {
+            let names = try await requireSession().schemas()
+            schemas = names.map { DatabaseSchema(name: $0) }
+            schemaLoadState = .loaded
+        } catch {
+            schemas = []
+            schemaLoadState = .failed(error.localizedDescription)
+            show(error)
+        }
     }
 
-    func loadTables(in schema: String) {
-        guard let index = schemas.firstIndex(where: { $0.name == schema }), !schemas[index].isLoaded else { return }
-        Task {
-            do {
-                let names = try await requireSession().tables(in: schema)
-                guard let current = schemas.firstIndex(where: { $0.name == schema }) else { return }
-                schemas[current].tables = names.map { DatabaseTable(schema: schema, name: $0) }
-                schemas[current].isLoaded = true
-            } catch { show(error) }
+    func loadTables(in schema: String, force: Bool = false) async {
+        guard let index = schemas.firstIndex(where: { $0.name == schema }) else { return }
+        if !force, schemas[index].tableLoadState == .loaded || schemas[index].tableLoadState == .loading { return }
+        schemas[index].tableLoadState = .loading
+        do {
+            let names = try await requireSession().tables(in: schema)
+            guard let current = schemas.firstIndex(where: { $0.name == schema }) else { return }
+            schemas[current].tables = names.map { DatabaseTable(schema: schema, name: $0) }
+            schemas[current].tableLoadState = .loaded
+        } catch {
+            guard let current = schemas.firstIndex(where: { $0.name == schema }) else { return }
+            schemas[current].tables = []
+            schemas[current].tableLoadState = .failed(error.localizedDescription)
+            show(error)
         }
     }
 

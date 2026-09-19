@@ -64,17 +64,55 @@ final class MySQLSession: DatabaseSession, @unchecked Sendable {
     }
 
     func schemas() async throws -> [String] {
-        let result = try await query("SHOW DATABASES")
-        return result.rows.compactMap(\.first)
+        do {
+            return Self.normalizedNames(try await firstColumn(of: "SHOW DATABASES"))
+        } catch let showError {
+            do {
+                return Self.normalizedNames(try await firstColumn(of: "SELECT `SCHEMA_NAME` FROM `information_schema`.`SCHEMATA` ORDER BY `SCHEMA_NAME`"))
+            } catch let informationSchemaError {
+                throw MySQLMetadataFailure(
+                    object: "数据库",
+                    attempts: [showError.localizedDescription, informationSchemaError.localizedDescription]
+                )
+            }
+        }
     }
 
     func tables(in schema: String) async throws -> [String] {
         let quoted = try SQLIdentifier.quote(schema)
-        let result = try await query("SHOW TABLES FROM \(quoted)")
-        return result.rows.compactMap(\.first)
+        do {
+            return Self.normalizedNames(try await firstColumn(of: "SHOW FULL TABLES FROM \(quoted)"))
+        } catch let showError {
+            do {
+                let literal = try SQLStringLiteral.quote(schema)
+                let sql = "SELECT `TABLE_NAME` FROM `information_schema`.`TABLES` WHERE `TABLE_SCHEMA` = \(literal) AND `TABLE_TYPE` IN ('BASE TABLE', 'VIEW') ORDER BY `TABLE_NAME`"
+                return Self.normalizedNames(try await firstColumn(of: sql))
+            } catch let informationSchemaError {
+                throw MySQLMetadataFailure(
+                    object: "数据库 \(schema) 中的表",
+                    attempts: [showError.localizedDescription, informationSchemaError.localizedDescription]
+                )
+            }
+        }
     }
 
     func close() async { try? await connection.close().get() }
+
+    private func firstColumn(of sql: String) async throws -> [String] {
+        let rows = try await connection.simpleQuery(sql).get()
+        return rows.compactMap { row in
+            guard let name = row.columnDefinitions.first?.name else { return nil }
+            return Self.display(row.column(name))
+        }
+    }
+
+    private static func normalizedNames(_ names: [String]) -> [String] {
+        var seen = Set<String>()
+        return names
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
 
     private static func display(_ data: MySQLData?) -> String {
         guard let data else { return "NULL" }
@@ -84,5 +122,14 @@ final class MySQLSession: DatabaseSession, @unchecked Sendable {
         if let value = data.double { return String(value) }
         if let value = data.date { return value.formatted(.iso8601) }
         return data.description
+    }
+}
+
+struct MySQLMetadataFailure: LocalizedError {
+    let object: String
+    let attempts: [String]
+
+    var errorDescription: String? {
+        "无法读取\(object)。已尝试 SHOW 命令和 information_schema；请检查账号的 SHOW DATABASES / 对象访问权限。\(attempts.joined(separator: "；"))"
     }
 }

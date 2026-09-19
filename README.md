@@ -46,7 +46,7 @@ Swift Package Manager fetches MySQLNIO and its SwiftNIO dependencies automatical
 To create a distributable Apple Silicon app bundle locally:
 
 ```sh
-./scripts/package-release.sh 0.1.0
+./scripts/package-release.sh 0.1.1
 ```
 
 The archive and its SHA-256 checksum are written to `dist/`.

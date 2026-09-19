@@ -3,26 +3,29 @@ import SwiftUI
 struct SchemaSidebar: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.openSettings) private var openSettings
+    @State private var expandedConnections = Set<UUID>()
+    @State private var expandedSchemas = Set<String>()
 
     var body: some View {
         List {
-            if !model.isConnected {
-                ContentUnavailableView("Not Connected", systemImage: "cylinder.split.1x2", description: Text("Open Settings to configure a server, then connect."))
-            }
-            ForEach(model.schemas) { schema in
-                DisclosureGroup(schema.name) {
-                    ForEach(schema.tables) { table in
-                        Button { model.browse(table) } label: {
-                            Label(table.name, systemImage: "tablecells")
-                                .frame(maxWidth: .infinity, alignment: .leading)
+            ForEach(model.profiles) { profile in
+                DisclosureGroup(isExpanded: connectionExpansion(for: profile)) {
+                    connectionContents(for: profile)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: connectionIcon(for: profile.id))
+                            .foregroundStyle(connectionColor(for: profile.id))
+                        Text(profile.name)
+                            .lineLimit(1)
+                        Spacer()
+                        if model.connectingProfileID == profile.id {
+                            ProgressView().controlSize(.small)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
-                .onAppear { model.loadTables(in: schema.name) }
             }
         }
-        .navigationTitle("Databases")
+        .navigationTitle("Connections")
         .safeAreaInset(edge: .bottom) {
             Button {
                 openSettings()
@@ -36,9 +39,131 @@ struct SchemaSidebar: View {
         }
         .toolbar {
             ToolbarItem {
-                Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.loadSchemas() } }
-                    .disabled(!model.isConnected)
+                Button("Refresh", systemImage: "arrow.clockwise") {
+                    Task {
+                        await model.loadSchemas()
+                        for schema in model.schemas where expandedSchemas.contains(schema.name) {
+                            await model.loadTables(in: schema.name)
+                        }
+                    }
+                }
+                .disabled(!model.isConnected)
             }
         }
+        .onAppear { expandConnectedProfile(model.connectedProfileID) }
+        .onChange(of: model.connectedProfileID) { _, profileID in
+            expandConnectedProfile(profileID)
+        }
+    }
+
+    @ViewBuilder
+    private func connectionContents(for profile: ConnectionProfile) -> some View {
+        if model.connectingProfileID == profile.id {
+            Label("Connecting…", systemImage: "hourglass")
+                .foregroundStyle(.secondary)
+        } else if model.connectedProfileID == profile.id {
+            switch model.schemaLoadState {
+            case .idle, .loading:
+                HStack { ProgressView().controlSize(.small); Text("Loading databases…") }
+                    .foregroundStyle(.secondary)
+            case .failed(let message):
+                metadataError(message) { Task { await model.loadSchemas() } }
+            case .loaded where model.schemas.isEmpty:
+                Label("No visible databases", systemImage: "eye.slash")
+                    .foregroundStyle(.secondary)
+            case .loaded:
+                ForEach(model.schemas) { schema in
+                    DisclosureGroup(isExpanded: schemaExpansion(for: schema.name)) {
+                        tableContents(for: schema)
+                    } label: {
+                        Label(schema.name, systemImage: "cylinder")
+                    }
+                }
+            }
+        } else {
+            Text("Expand to connect")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func tableContents(for schema: DatabaseSchema) -> some View {
+        switch schema.tableLoadState {
+        case .idle:
+            Text("Expand to load tables")
+                .foregroundStyle(.secondary)
+        case .loading:
+            HStack { ProgressView().controlSize(.small); Text("Loading tables…") }
+                .foregroundStyle(.secondary)
+        case .failed(let message):
+            metadataError(message) { Task { await model.loadTables(in: schema.name, force: true) } }
+        case .loaded where schema.tables.isEmpty:
+            Text("No tables or views")
+                .foregroundStyle(.secondary)
+        case .loaded:
+            ForEach(schema.tables) { table in
+                Button { model.browse(table) } label: {
+                    Label(table.name, systemImage: "tablecells")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func metadataError(_ message: String, retry: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label("Unable to load", systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+            Button("Retry", action: retry)
+                .buttonStyle(.link)
+        }
+    }
+
+    private func connectionExpansion(for profile: ConnectionProfile) -> Binding<Bool> {
+        Binding {
+            expandedConnections.contains(profile.id)
+        } set: { expanded in
+            if expanded {
+                expandedConnections = [profile.id]
+                if model.connectedProfileID != profile.id && model.connectingProfileID != profile.id {
+                    expandedSchemas.removeAll()
+                    model.connect(to: profile.id)
+                }
+            } else {
+                expandedConnections.remove(profile.id)
+            }
+        }
+    }
+
+    private func schemaExpansion(for name: String) -> Binding<Bool> {
+        Binding {
+            expandedSchemas.contains(name)
+        } set: { expanded in
+            if expanded {
+                expandedSchemas.insert(name)
+                Task { await model.loadTables(in: name) }
+            } else {
+                expandedSchemas.remove(name)
+            }
+        }
+    }
+
+    private func connectionIcon(for id: UUID) -> String {
+        if model.connectedProfileID == id { return "bolt.horizontal.circle.fill" }
+        return "externaldrive.connected.to.line.below"
+    }
+
+    private func connectionColor(for id: UUID) -> Color {
+        model.connectedProfileID == id ? .green : .secondary
+    }
+
+    private func expandConnectedProfile(_ profileID: UUID?) {
+        guard let profileID else { return }
+        expandedConnections = [profileID]
     }
 }
