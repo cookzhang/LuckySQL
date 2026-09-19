@@ -21,6 +21,10 @@ LuckySQL is a free, open-source, native macOS database client. This repository c
 
 Apple Silicon is the primary target. The code has no architecture-specific assumptions and may also build on Intel Macs.
 
+## Download
+
+Prebuilt Apple Silicon packages are available from [GitHub Releases](https://github.com/cookzhang/LuckySQL/releases). The current community build uses an ad-hoc signature and is not notarized by Apple. After downloading, right-click **LuckySQL.app**, choose **Open**, and confirm the first launch if macOS displays a security prompt.
+
 ## Build and run
 
 1. Clone the repository.
@@ -38,6 +42,14 @@ swift run LuckySQL
 ```
 
 Swift Package Manager fetches MySQLNIO and its SwiftNIO dependencies automatically. Version `1.8.0` is intentionally pinned: it supports Swift 5.10 and modern MySQL `caching_sha2_password` authentication.
+
+To create a distributable Apple Silicon app bundle locally:
+
+```sh
+./scripts/package-release.sh 0.1.0
+```
+
+The archive and its SHA-256 checksum are written to `dist/`.
 
 > Security note: the MVP currently uses a direct non-TLS MySQL connection. Use it with localhost or a trusted private network. TLS configuration and SSH tunnelling are high-priority roadmap items.
 
