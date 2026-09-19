@@ -16,7 +16,7 @@ LuckySQL is a free, open-source, native macOS database client. This repository c
 ## Requirements
 
 - macOS 14 or newer
-- Xcode 15.3 or newer (Swift 5.10+)
+- Xcode 16 or newer (Swift 5.10+ package compatibility)
 - MySQL 5.7+/8+/9 or a compatible MariaDB server
 
 Apple Silicon is the primary target. The code has no architecture-specific assumptions and may also build on Intel Macs.
