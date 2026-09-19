@@ -1,0 +1,200 @@
+[1223/1267] Compiling NIOSSL SSLCertificateExtensions.swift
+[1224/1267] Compiling NIOSSL SSLCertificateName.swift
+[1225/1267] Compiling NIOSSL SSLConnection.swift
+[1226/1267] Compiling NIOSSL SSLContext.swift
+[1227/1267] Compiling NIOSSL SSLErrors.swift
+[1228/1267] Compiling NIOSSL SSLInit.swift
+[1229/1267] Compiling NIOSSL SSLPKCS12Bundle.swift
+[1230/1267] Compiling NIOSSL SSLPrivateKey.swift
+[1231/1267] Compiling NIOSSL SSLPublicKey.swift
+[1232/1267] Compiling NIOSSL SecurityFrameworkCertificateVerification.swift
+/Users/runner/work/LuckySQL/LuckySQL/.build/checkouts/swift-nio-ssl/Sources/NIOSSL/SecurityFrameworkCertificateVerification.swift:26:17: remark: '@preconcurrency' attribute on module 'Security' is unused
+@preconcurrency import Security
+~~~~~~~~~~~~~~~~^
+[1233/1267] Compiling NIOSSL String+unsafeUninitializedCapacity.swift
+/Users/runner/work/LuckySQL/LuckySQL/.build/checkouts/swift-nio-ssl/Sources/NIOSSL/SecurityFrameworkCertificateVerification.swift:26:17: remark: '@preconcurrency' attribute on module 'Security' is unused
+@preconcurrency import Security
+~~~~~~~~~~~~~~~~^
+[1234/1267] Compiling NIOSSL SubjectAlternativeName.swift
+/Users/runner/work/LuckySQL/LuckySQL/.build/checkouts/swift-nio-ssl/Sources/NIOSSL/SecurityFrameworkCertificateVerification.swift:26:17: remark: '@preconcurrency' attribute on module 'Security' is unused
+@preconcurrency import Security
+~~~~~~~~~~~~~~~~^
+[1235/1267] Compiling NIOSSL NIOSSLSecureBytes.swift
+/Users/runner/work/LuckySQL/LuckySQL/.build/checkouts/swift-nio-ssl/Sources/NIOSSL/SecurityFrameworkCertificateVerification.swift:26:17: remark: '@preconcurrency' attribute on module 'Security' is unused
+@preconcurrency import Security
+~~~~~~~~~~~~~~~~^
+[1236/1267] Compiling NIOSSL RNG.swift
+/Users/runner/work/LuckySQL/LuckySQL/.build/checkouts/swift-nio-ssl/Sources/NIOSSL/SecurityFrameworkCertificateVerification.swift:26:17: remark: '@preconcurrency' attribute on module 'Security' is unused
+@preconcurrency import Security
+~~~~~~~~~~~~~~~~^
+[1237/1267] Compiling NIOSSL SafeCompare.swift
+/Users/runner/work/LuckySQL/LuckySQL/.build/checkouts/swift-nio-ssl/Sources/NIOSSL/SecurityFrameworkCertificateVerification.swift:26:17: remark: '@preconcurrency' attribute on module 'Security' is unused
+@preconcurrency import Security
+~~~~~~~~~~~~~~~~^
+[1238/1267] Compiling NIOSSL Zeroization.swift
+/Users/runner/work/LuckySQL/LuckySQL/.build/checkouts/swift-nio-ssl/Sources/NIOSSL/SecurityFrameworkCertificateVerification.swift:26:17: remark: '@preconcurrency' attribute on module 'Security' is unused
+@preconcurrency import Security
+~~~~~~~~~~~~~~~~^
+[1239/1267] Compiling NIOSSL TLSConfiguration.swift
+/Users/runner/work/LuckySQL/LuckySQL/.build/checkouts/swift-nio-ssl/Sources/NIOSSL/SecurityFrameworkCertificateVerification.swift:26:17: remark: '@preconcurrency' attribute on module 'Security' is unused
+@preconcurrency import Security
+~~~~~~~~~~~~~~~~^
+[1240/1267] Compiling NIOSSL UniversalBootstrapSupport.swift
+/Users/runner/work/LuckySQL/LuckySQL/.build/checkouts/swift-nio-ssl/Sources/NIOSSL/SecurityFrameworkCertificateVerification.swift:26:17: remark: '@preconcurrency' attribute on module 'Security' is unused
+@preconcurrency import Security
+~~~~~~~~~~~~~~~~^
+[1241/1267] Compiling NIOSSL UnsafeKeyAndChainTarget.swift
+/Users/runner/work/LuckySQL/LuckySQL/.build/checkouts/swift-nio-ssl/Sources/NIOSSL/SecurityFrameworkCertificateVerification.swift:26:17: remark: '@preconcurrency' attribute on module 'Security' is unused
+@preconcurrency import Security
+~~~~~~~~~~~~~~~~^
+[1242/1267] Compiling NIOSSL resource_bundle_accessor.swift
+/Users/runner/work/LuckySQL/LuckySQL/.build/checkouts/swift-nio-ssl/Sources/NIOSSL/SecurityFrameworkCertificateVerification.swift:26:17: remark: '@preconcurrency' attribute on module 'Security' is unused
+@preconcurrency import Security
+~~~~~~~~~~~~~~~~^
+[1263/1295] Compiling MySQLNIO MySQLPacketSequence.swift
+[1264/1295] Compiling MySQLNIO MySQLProtocol+BinaryResultSetRow.swift
+[1265/1295] Compiling MySQLNIO MySQLProtocol+COM_QUERY.swift
+[1266/1295] Compiling MySQLNIO MySQLProtocol+COM_QUERY_Response.swift
+[1267/1295] Compiling MySQLNIO MySQLProtocol+COM_QUIT.swift
+[1268/1295] Compiling MySQLNIO MySQLProtocol+COM_STMT_CLOSE.swift
+[1269/1295] Compiling MySQLNIO MySQLProtocol+COM_STMT_EXECUTE.swift
+[1270/1295] Compiling MySQLNIO MySQLProtocol+COM_STMT_PREPARE.swift
+[1271/1295] Compiling MySQLNIO MySQLProtocol+COM_STMT_PREPARE_OK.swift
+[1272/1295] Compiling MySQLNIO MySQLProtocol+CapabilityFlags.swift
+[1273/1295] Compiling MySQLNIO MySQLProtocol+CharacterSet.swift
+[1274/1295] Compiling MySQLNIO MySQLProtocol+ColumnDefinition41.swift
+[1275/1295] Compiling MySQLNIO MySQLProtocol+ColumnFlags.swift
+[1276/1308] Emitting module MySQLNIO
+[1277/1308] Compiling MySQLNIO Exports.swift
+[1278/1308] Compiling MySQLNIO MySQLConnection.swift
+[1279/1308] Compiling MySQLNIO MySQLConnectionHandler.swift
+[1280/1308] Compiling MySQLNIO MySQLData.swift
+[1281/1308] Compiling MySQLNIO MySQLDataConvertible.swift
+[1282/1308] Compiling MySQLNIO MySQLDatabase.swift
+[1283/1308] Compiling MySQLNIO MySQLError.swift
+[1284/1308] Compiling MySQLNIO MySQLQueryCommand.swift
+[1285/1308] Compiling MySQLNIO MySQLRow.swift
+[1286/1308] Compiling MySQLNIO MySQLSimpleQueryCommand.swift
+[1287/1308] Compiling MySQLNIO MySQLTime.swift
+[1288/1308] Compiling MySQLNIO MySQLPacket.swift
+[1289/1308] Compiling MySQLNIO MySQLPacketDecoder.swift
+[1290/1308] Compiling MySQLNIO MySQLPacketEncoder.swift
+[1291/1308] Compiling MySQLNIO MySQLProtocol+DataType.swift
+[1292/1308] Compiling MySQLNIO MySQLProtocol+ERR_Packet.swift
+[1293/1308] Compiling MySQLNIO MySQLProtocol+ErrorCode.swift
+[1294/1308] Compiling MySQLNIO MySQLProtocol+HandshakeResponse41.swift
+[1295/1308] Compiling MySQLNIO MySQLProtocol+HandshakeV10.swift
+[1296/1308] Compiling MySQLNIO MySQLProtocol+NullBitmap.swift
+[1297/1308] Compiling MySQLNIO MySQLProtocol+OK_Packet.swift
+[1298/1308] Compiling MySQLNIO MySQLProtocol+SSLRequest.swift
+[1299/1308] Compiling MySQLNIO MySQLProtocol+StatusFlags.swift
+[1300/1308] Compiling MySQLNIO MySQLProtocol+TextResultSetRow.swift
+[1301/1308] Compiling MySQLNIO MySQLProtocol.swift
+[1302/1308] Compiling MySQLNIO CryptoUtils.swift
+[1303/1308] Compiling MySQLNIO NIOUtils.swift
+[1304/1317] Compiling LuckySQL Models.swift
+/Users/runner/work/LuckySQL/LuckySQL/Sources/LuckySQL/Views/SchemaSidebar.swift:5:6: error: generic parameter 'T' could not be inferred
+    @Environment(\.openSettings) private var openSettings
+     ^
+SwiftUI.Environment:5:12: note: in call to initializer
+    public init<T>(_ objectType: T.Type) where Value == T?, T : AnyObject, T : Observable
+           ^
+/Users/runner/work/LuckySQL/LuckySQL/Sources/LuckySQL/Views/SchemaSidebar.swift:5:18: error: cannot infer key path type from context; consider explicitly specifying a root type
+    @Environment(\.openSettings) private var openSettings
+                 ^
+                  <#Root#>
+[1305/1317] Compiling LuckySQL KeychainStore.swift
+/Users/runner/work/LuckySQL/LuckySQL/Sources/LuckySQL/Views/SchemaSidebar.swift:5:6: error: generic parameter 'T' could not be inferred
+    @Environment(\.openSettings) private var openSettings
+     ^
+SwiftUI.Environment:5:12: note: in call to initializer
+    public init<T>(_ objectType: T.Type) where Value == T?, T : AnyObject, T : Observable
+           ^
+/Users/runner/work/LuckySQL/LuckySQL/Sources/LuckySQL/Views/SchemaSidebar.swift:5:18: error: cannot infer key path type from context; consider explicitly specifying a root type
+    @Environment(\.openSettings) private var openSettings
+                 ^
+                  <#Root#>
+[1306/1317] Compiling LuckySQL ProfileStore.swift
+/Users/runner/work/LuckySQL/LuckySQL/Sources/LuckySQL/Views/SchemaSidebar.swift:5:6: error: generic parameter 'T' could not be inferred
+    @Environment(\.openSettings) private var openSettings
+     ^
+SwiftUI.Environment:5:12: note: in call to initializer
+    public init<T>(_ objectType: T.Type) where Value == T?, T : AnyObject, T : Observable
+           ^
+/Users/runner/work/LuckySQL/LuckySQL/Sources/LuckySQL/Views/SchemaSidebar.swift:5:18: error: cannot infer key path type from context; consider explicitly specifying a root type
+    @Environment(\.openSettings) private var openSettings
+                 ^
+                  <#Root#>
+[1307/1317] Compiling LuckySQL ContentView.swift
+/Users/runner/work/LuckySQL/LuckySQL/Sources/LuckySQL/Views/SchemaSidebar.swift:5:6: error: generic parameter 'T' could not be inferred
+    @Environment(\.openSettings) private var openSettings
+     ^
+SwiftUI.Environment:5:12: note: in call to initializer
+    public init<T>(_ objectType: T.Type) where Value == T?, T : AnyObject, T : Observable
+           ^
+/Users/runner/work/LuckySQL/LuckySQL/Sources/LuckySQL/Views/SchemaSidebar.swift:5:18: error: cannot infer key path type from context; consider explicitly specifying a root type
+    @Environment(\.openSettings) private var openSettings
+                 ^
+                  <#Root#>
+error: emit-module command failed with exit code 1 (use -v to see invocation)
+[1308/1321] Emitting module LuckySQL
+/Users/runner/work/LuckySQL/LuckySQL/Sources/LuckySQL/Views/SchemaSidebar.swift:5:6: error: generic parameter 'T' could not be inferred
+    @Environment(\.openSettings) private var openSettings
+     ^
+SwiftUI.Environment:5:12: note: in call to initializer
+    public init<T>(_ objectType: T.Type) where Value == T?, T : AnyObject, T : Observable
+           ^
+/Users/runner/work/LuckySQL/LuckySQL/Sources/LuckySQL/Views/SchemaSidebar.swift:5:18: error: cannot infer key path type from context; consider explicitly specifying a root type
+    @Environment(\.openSettings) private var openSettings
+                 ^
+                  <#Root#>
+[1309/1321] Compiling LuckySQL AppModel.swift
+[1310/1321] Compiling LuckySQL LuckySQLApp.swift
+[1311/1321] Compiling LuckySQL DatabaseDriver.swift
+[1312/1321] Compiling LuckySQL MySQLDriver.swift
+[1313/1321] Compiling LuckySQL EditorView.swift
+/Users/runner/work/LuckySQL/LuckySQL/Sources/LuckySQL/Views/SchemaSidebar.swift:5:6: error: generic parameter 'T' could not be inferred
+    @Environment(\.openSettings) private var openSettings
+     ^
+SwiftUI.Environment:5:12: note: in call to initializer
+    public init<T>(_ objectType: T.Type) where Value == T?, T : AnyObject, T : Observable
+           ^
+/Users/runner/work/LuckySQL/LuckySQL/Sources/LuckySQL/Views/SchemaSidebar.swift:5:18: error: cannot infer key path type from context; consider explicitly specifying a root type
+    @Environment(\.openSettings) private var openSettings
+                 ^
+                  <#Root#>
+[1314/1321] Compiling LuckySQL ResultGrid.swift
+/Users/runner/work/LuckySQL/LuckySQL/Sources/LuckySQL/Views/SchemaSidebar.swift:5:6: error: generic parameter 'T' could not be inferred
+    @Environment(\.openSettings) private var openSettings
+     ^
+SwiftUI.Environment:5:12: note: in call to initializer
+    public init<T>(_ objectType: T.Type) where Value == T?, T : AnyObject, T : Observable
+           ^
+/Users/runner/work/LuckySQL/LuckySQL/Sources/LuckySQL/Views/SchemaSidebar.swift:5:18: error: cannot infer key path type from context; consider explicitly specifying a root type
+    @Environment(\.openSettings) private var openSettings
+                 ^
+                  <#Root#>
+[1315/1321] Compiling LuckySQL SchemaSidebar.swift
+/Users/runner/work/LuckySQL/LuckySQL/Sources/LuckySQL/Views/SchemaSidebar.swift:5:6: error: generic parameter 'T' could not be inferred
+    @Environment(\.openSettings) private var openSettings
+     ^
+SwiftUI.Environment:5:12: note: in call to initializer
+    public init<T>(_ objectType: T.Type) where Value == T?, T : AnyObject, T : Observable
+           ^
+/Users/runner/work/LuckySQL/LuckySQL/Sources/LuckySQL/Views/SchemaSidebar.swift:5:18: error: cannot infer key path type from context; consider explicitly specifying a root type
+    @Environment(\.openSettings) private var openSettings
+                 ^
+                  <#Root#>
+[1316/1321] Compiling LuckySQL SettingsView.swift
+/Users/runner/work/LuckySQL/LuckySQL/Sources/LuckySQL/Views/SchemaSidebar.swift:5:6: error: generic parameter 'T' could not be inferred
+    @Environment(\.openSettings) private var openSettings
+     ^
+SwiftUI.Environment:5:12: note: in call to initializer
+    public init<T>(_ objectType: T.Type) where Value == T?, T : AnyObject, T : Observable
+           ^
+/Users/runner/work/LuckySQL/LuckySQL/Sources/LuckySQL/Views/SchemaSidebar.swift:5:18: error: cannot infer key path type from context; consider explicitly specifying a root type
+    @Environment(\.openSettings) private var openSettings
+                 ^
+                  <#Root#>
+error: fatalError
+error: fatalError
