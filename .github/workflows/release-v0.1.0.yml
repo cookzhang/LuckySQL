@@ -26,12 +26,18 @@ jobs:
           status=${PIPESTATUS[0]}
           set -e
           if [[ "$status" -ne 0 ]]; then
+            tail -n 200 "$RUNNER_TEMP/swift-test.log" > Docs/CI_FAILURE.log
             {
               echo "### Swift test failure"
               echo '```text'
-              tail -n 120 "$RUNNER_TEMP/swift-test.log"
+              cat Docs/CI_FAILURE.log
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git add Docs/CI_FAILURE.log
+            git commit -m 'Record release CI failure'
+            git push origin master
             exit "$status"
           fi
 
