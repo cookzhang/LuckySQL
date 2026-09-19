@@ -20,7 +20,20 @@ jobs:
         run: sudo xcode-select --switch /Applications/Xcode_15.4.app/Contents/Developer
 
       - name: Run tests
-        run: swift test
+        run: |
+          set +e
+          swift test 2>&1 | tee "$RUNNER_TEMP/swift-test.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$status" -ne 0 ]]; then
+            {
+              echo "### Swift test failure"
+              echo '```text'
+              tail -n 120 "$RUNNER_TEMP/swift-test.log"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit "$status"
+          fi
 
       - name: Package Apple Silicon app
         run: ./scripts/package-release.sh 0.1.0
