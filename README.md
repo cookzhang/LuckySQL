@@ -7,10 +7,10 @@ LuckySQL is a free, open-source, native macOS database client. This repository c
 - Multiple connection profiles (`host`, `port`, `user`, `password`, default database)
 - Passwords stored in macOS Keychain; non-secret profile fields stored in UserDefaults
 - Pure-Swift MySQL connection through MySQLNIO; no `libmysqlclient` installation
-- Database/schema and table navigation tree
-- SQL editor with **Command–Return** execution
-- Horizontally and vertically scrollable result grid
-- Double-click-style workflow: click a table to run a quoted `SELECT * … LIMIT 200`
+- Database/schema/table navigation tree with column types, nullability, and primary-key details
+- Syntax-highlighted SQL editor with database selection, **Command–Return** execution, WHERE templates, and smart-quote correction
+- Horizontally and vertically scrollable result grid with selectable, copyable cells
+- Browse-table workflow with primary-key-safe cell editing and row deletion
 - Clear driver/session boundary for future database engines
 
 ## Requirements
@@ -71,7 +71,7 @@ See [Architecture](Docs/ARCHITECTURE.md) and [Roadmap](Docs/ROADMAP.md) for desi
 - One active connection and one editor tab
 - Direct, non-TLS TCP only
 - Results are buffered in memory and capped only when browsing tables
-- No cancellation, query history, editing result cells, or transaction controls yet
+- No cancellation, query history, or transaction controls yet
 - SQL statements entered by the user execute with the connected account's full privileges
 
 ## License

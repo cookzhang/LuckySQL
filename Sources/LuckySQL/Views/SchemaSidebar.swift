@@ -102,13 +102,47 @@ struct SchemaSidebar: View {
                 .foregroundStyle(.secondary)
         case .loaded:
             ForEach(schema.tables) { table in
-                Button { model.browse(table) } label: {
-                    Label(table.name, systemImage: "tablecells")
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                DisclosureGroup {
+                    tableStructure(for: table)
+                } label: {
+                    HStack {
+                        Label(table.name, systemImage: "tablecells")
+                        Spacer()
+                        Button("Browse", systemImage: "arrow.right.circle") { model.browse(table) }
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.plain)
+                            .help("Browse rows")
+                    }
                 }
-                .buttonStyle(.plain)
             }
         }
+    }
+
+    @ViewBuilder
+    private func tableStructure(for table: DatabaseTable) -> some View {
+        if let columns = model.tableColumns[table.id] {
+            ForEach(columns) { column in
+                HStack(spacing: 5) {
+                    Image(systemName: column.isPrimaryKey ? "key.fill" : "rectangle.and.pencil.and.ellipsis")
+                        .foregroundStyle(column.isPrimaryKey ? .orange : .secondary)
+                    Text(column.name).lineLimit(1)
+                    Spacer()
+                    Text(column.dataType).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    if column.isNullable { Text("NULL").font(.caption2).foregroundStyle(.tertiary) }
+                }
+                .help(columnHelp(column))
+            }
+        } else {
+            HStack { ProgressView().controlSize(.small); Text("Loading columns…") }
+                .task { await model.loadColumns(in: table) }
+        }
+    }
+
+    private func columnHelp(_ column: TableColumn) -> String {
+        var parts = [column.dataType]
+        if let value = column.defaultValue { parts.append("default \(value)") }
+        if !column.extra.isEmpty { parts.append(column.extra) }
+        return parts.joined(separator: " · ")
     }
 
     private func metadataError(_ message: String, retry: @escaping () -> Void) -> some View {

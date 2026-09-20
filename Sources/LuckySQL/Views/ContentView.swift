@@ -12,7 +12,7 @@ struct ContentView: View {
                 EditorView()
                     .frame(minHeight: 170, idealHeight: 250)
                 Divider()
-                ResultGrid(result: model.result)
+                ResultGrid()
             }
         }
         .toolbar { toolbar }

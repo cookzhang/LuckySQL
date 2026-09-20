@@ -16,6 +16,10 @@ final class LuckySQLTests: XCTestCase {
         XCTAssertThrowsError(try SQLStringLiteral.quote("bad\0name"))
     }
 
+    func testSmartQuotesAreNormalized() {
+        XCTAssertEqual(SQLInputNormalizer.normalize("WHERE name=‘Lucky’ AND title=“SQL”"), "WHERE name='Lucky' AND title=\"SQL\"")
+    }
+
     func testConnectionLoadsSchemasAndTables() async throws {
         let suiteName = "LuckySQLTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -41,6 +45,26 @@ final class LuckySQLTests: XCTestCase {
         model.disconnect()
     }
 
+    func testBrowseResultCanUpdateByPrimaryKey() async throws {
+        let suiteName = "LuckySQLTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let session = StubSession()
+        let model = AppModel(profileStore: ProfileStore(defaults: defaults), keychain: StubPasswordStore(), driver: StubDriver(session: session))
+        model.connect()
+        try await waitUntil { model.schemaLoadState == .loaded }
+        let table = DatabaseTable(schema: "shop", name: "orders")
+        model.browse(table)
+        try await waitUntil { model.canMutateSelectedTable && model.result.rows.count == 1 }
+
+        model.updateCell(row: 0, column: 1, value: "paid")
+        try await waitUntil { await session.queries().contains(where: { $0.hasPrefix("UPDATE ") }) }
+        let recordedQueries = await session.queries()
+        let update = try XCTUnwrap(recordedQueries.first(where: { $0.hasPrefix("UPDATE ") }))
+        XCTAssertEqual(update, "UPDATE `shop`.`orders` SET `status` = 'paid' WHERE `id` = '7' LIMIT 1;")
+        model.disconnect()
+    }
+
     private func waitUntil(
         timeoutNanoseconds: UInt64 = 2_000_000_000,
         condition: @escaping @MainActor () -> Bool
@@ -54,13 +78,38 @@ final class LuckySQLTests: XCTestCase {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
     }
+
+    private func waitUntil(
+        timeoutNanoseconds: UInt64 = 2_000_000_000,
+        condition: @escaping @MainActor () async -> Bool
+    ) async throws {
+        let started = DispatchTime.now().uptimeNanoseconds
+        while !(await condition()) {
+            if DispatchTime.now().uptimeNanoseconds - started > timeoutNanoseconds {
+                XCTFail("Timed out waiting for asynchronous state change")
+                return
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+    }
 }
 
 private actor StubSession: DatabaseSession {
-    func query(_ sql: String) async throws -> QueryResult { .empty }
+    private var recordedQueries: [String] = []
+    func query(_ sql: String) async throws -> QueryResult {
+        recordedQueries.append(sql)
+        if sql.hasPrefix("SELECT") {
+            return QueryResult(columns: ["id", "status"], rows: [["7", "new"]], elapsed: .zero, message: "1 row(s)")
+        }
+        return .empty
+    }
+    func queries() -> [String] { recordedQueries }
     func schemas() async throws -> [String] { ["information_schema", "shop"] }
     func tables(in schema: String) async throws -> [String] {
         schema == "shop" ? ["customers", "orders"] : []
+    }
+    func columns(in table: DatabaseTable) async throws -> [TableColumn] {
+        [TableColumn(name: "id", dataType: "bigint", isNullable: false, isPrimaryKey: true, defaultValue: nil, extra: "auto_increment")]
     }
     func close() async {}
 }

@@ -96,6 +96,28 @@ final class MySQLSession: DatabaseSession, @unchecked Sendable {
         }
     }
 
+    func columns(in table: DatabaseTable) async throws -> [TableColumn] {
+        let schema = try SQLStringLiteral.quote(table.schema)
+        let name = try SQLStringLiteral.quote(table.name)
+        let sql = """
+        SELECT `COLUMN_NAME`, `COLUMN_TYPE`, `IS_NULLABLE`, `COLUMN_KEY`, `COLUMN_DEFAULT`, `EXTRA`
+        FROM `information_schema`.`COLUMNS`
+        WHERE `TABLE_SCHEMA` = \(schema) AND `TABLE_NAME` = \(name)
+        ORDER BY `ORDINAL_POSITION`
+        """
+        let rows = try await connection.simpleQuery(sql).get()
+        return rows.map { row in
+            TableColumn(
+                name: Self.display(row.column("COLUMN_NAME")),
+                dataType: Self.display(row.column("COLUMN_TYPE")),
+                isNullable: Self.display(row.column("IS_NULLABLE")) == "YES",
+                isPrimaryKey: Self.display(row.column("COLUMN_KEY")) == "PRI",
+                defaultValue: row.column("COLUMN_DEFAULT").flatMap { $0.string },
+                extra: Self.display(row.column("EXTRA")) == "NULL" ? "" : Self.display(row.column("EXTRA"))
+            )
+        }
+    }
+
     func close() async { try? await connection.close().get() }
 
     private func firstColumn(of sql: String) async throws -> [String] {
