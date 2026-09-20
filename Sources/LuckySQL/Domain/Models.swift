@@ -31,6 +31,16 @@ struct DatabaseTable: Identifiable, Hashable {
     let name: String
 }
 
+struct TableColumn: Identifiable, Hashable, Sendable {
+    var id: String { name }
+    let name: String
+    let dataType: String
+    let isNullable: Bool
+    let isPrimaryKey: Bool
+    let defaultValue: String?
+    let extra: String
+}
+
 struct QueryResult: Sendable {
     let columns: [String]
     let rows: [[String]]
@@ -63,5 +73,15 @@ enum SQLStringLiteral {
     static func quote(_ value: String) throws -> String {
         guard !value.contains("\0") else { throw DatabaseError.invalidIdentifier(value) }
         return "'\(value.replacingOccurrences(of: "'", with: "''"))'"
+    }
+}
+
+enum SQLInputNormalizer {
+    static func normalize(_ sql: String) -> String {
+        sql
+            .replacingOccurrences(of: "‘", with: "'")
+            .replacingOccurrences(of: "’", with: "'")
+            .replacingOccurrences(of: "“", with: "\"")
+            .replacingOccurrences(of: "”", with: "\"")
     }
 }
