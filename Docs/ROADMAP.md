@@ -1,5 +1,7 @@
 # Roadmap
 
+Current implementation and acceptance status are tracked in [HEIDISQL_PARITY.md](HEIDISQL_PARITY.md). Multiple query tabs, selection/current execution, local history, basic formatting/completion, native grid, data paging/filtering, structure previews, and current-result exports have now landed. Items below describe broader targets; partial implementations are not full parity.
+
 ## 0.1 — Harden the MySQL MVP
 
 - TLS modes (`required`, CA verification, client certificates)

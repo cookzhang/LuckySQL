@@ -1,18 +1,21 @@
 import Foundation
 import Security
 
-protocol PasswordStoring {
-    func save(_ password: String, for profileID: UUID) throws
-    func password(for profileID: UUID) throws -> String?
-    func deletePassword(for profileID: UUID) throws
+protocol PasswordStoring: Sendable {
+    func save(_ password: String, for profileID: UUID) async throws
+    func password(for profileID: UUID) async throws -> String?
+    func deletePassword(for profileID: UUID) async throws
 }
 
-final class KeychainStore: PasswordStoring {
+actor KeychainStore: PasswordStoring {
     private let service = "app.luckysql.connection-password"
 
     func save(_ password: String, for profileID: UUID) throws {
-        try deletePassword(for: profileID)
-        guard !password.isEmpty else { return }
+        guard !password.isEmpty else { try deletePassword(for: profileID); return }
+        let query: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: profileID.uuidString]
+        let update = SecItemUpdate(query as CFDictionary, [kSecValueData: Data(password.utf8)] as CFDictionary)
+        if update == errSecSuccess { return }
+        guard update == errSecItemNotFound else { throw KeychainError(update) }
         let status = SecItemAdd([
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,

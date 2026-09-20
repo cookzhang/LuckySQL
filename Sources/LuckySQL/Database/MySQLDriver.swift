@@ -23,7 +23,19 @@ final class MySQLDriver: DatabaseDriver, @unchecked Sendable {
                 logger: Logger(label: "LuckySQL.MySQL"),
                 on: group.next()
             ).get()
-            return MySQLSession(connection: connection)
+            do {
+                // MySQLNIO requests collation 255 (8.0's utf8mb4_0900_ai_ci)
+                // during handshake. Older servers silently fall back to their
+                // default charset. Explicitly negotiate a collation shared by
+                // 5.6, 5.7 and 8.x before sending any user SQL.
+                _ = try await connection.textQuery("SET NAMES utf8mb4 COLLATE utf8mb4_general_ci")
+                let probe = try await connection.textQuery("SELECT 1")
+                guard probe.rows.count == 1 else { throw MySQLError.protocolError }
+                return MySQLSession(connection: connection)
+            } catch {
+                try? await connection.close().get()
+                throw error
+            }
         } catch {
             throw MySQLConnectionFailure(host: profile.host, port: profile.port, underlying: error)
         }
@@ -53,14 +65,22 @@ final class MySQLSession: DatabaseSession, @unchecked Sendable {
     func query(_ sql: String) async throws -> QueryResult {
         let clock = ContinuousClock()
         let start = clock.now
-        let rows = try await connection.simpleQuery(sql).get()
-        let columns = rows.first?.columnDefinitions.map(\.name) ?? []
-        let values = rows.map { row in
-            columns.map { name in Self.display(row.column(name)) }
+        let response = try await connection.textQuery(sql, rowLimit: 10_000)
+        let rows = response.rows
+        let columns = response.columns.map(\.name)
+        var nullCells = Set<CellAddress>()
+        let values = rows.enumerated().map { rowIndex, row in
+            row.values.enumerated().map { columnIndex, buffer -> String in
+                if buffer == nil { nullCells.insert(CellAddress(row: rowIndex, column: columnIndex)) }
+                // Positional access preserves distinct values when columns have duplicate names.
+                let definition = row.columnDefinitions[columnIndex]
+                let data = MySQLData(type: definition.columnType, format: row.format, buffer: buffer, isUnsigned: definition.flags.contains(.COLUMN_UNSIGNED))
+                return Self.display(data)
+            }
         }
         let elapsed = start.duration(to: clock.now)
-        let message = columns.isEmpty ? "Statement completed" : "\(values.count) row(s)"
-        return QueryResult(columns: columns, rows: values, elapsed: elapsed, message: message)
+        let message = columns.isEmpty ? "\(response.affectedRows) affected row(s)" : response.rowCount > values.count ? "Showing first \(values.count) of \(response.rowCount) rows (preview limit)" : "\(values.count) row(s)"
+        return QueryResult(columns: columns, rows: values, elapsed: elapsed, message: message, nullCells: nullCells)
     }
 
     func schemas() async throws -> [String] {
@@ -100,12 +120,12 @@ final class MySQLSession: DatabaseSession, @unchecked Sendable {
         let schema = try SQLStringLiteral.quote(table.schema)
         let name = try SQLStringLiteral.quote(table.name)
         let sql = """
-        SELECT `COLUMN_NAME`, `COLUMN_TYPE`, `IS_NULLABLE`, `COLUMN_KEY`, `COLUMN_DEFAULT`, `EXTRA`
+        SELECT `COLUMN_NAME`, `COLUMN_TYPE`, `IS_NULLABLE`, `COLUMN_KEY`, `COLUMN_DEFAULT`, `EXTRA`, `COLUMN_COMMENT`
         FROM `information_schema`.`COLUMNS`
         WHERE `TABLE_SCHEMA` = \(schema) AND `TABLE_NAME` = \(name)
         ORDER BY `ORDINAL_POSITION`
         """
-        let rows = try await connection.simpleQuery(sql).get()
+        let rows = try await connection.textQuery(sql).rows
         return rows.map { row in
             TableColumn(
                 name: Self.display(row.column("COLUMN_NAME")),
@@ -113,15 +133,37 @@ final class MySQLSession: DatabaseSession, @unchecked Sendable {
                 isNullable: Self.display(row.column("IS_NULLABLE")) == "YES",
                 isPrimaryKey: Self.display(row.column("COLUMN_KEY")) == "PRI",
                 defaultValue: row.column("COLUMN_DEFAULT").flatMap { $0.string },
-                extra: Self.display(row.column("EXTRA")) == "NULL" ? "" : Self.display(row.column("EXTRA"))
+                extra: Self.display(row.column("EXTRA")) == "NULL" ? "" : Self.display(row.column("EXTRA")),
+                comment: row.column("COLUMN_COMMENT")?.string ?? ""
             )
         }
     }
 
+    func structure(in table: DatabaseTable) async throws -> TableStructure {
+        let qualified = "\(try SQLIdentifier.quote(table.schema)).\(try SQLIdentifier.quote(table.name))"
+        let columns = try await columns(in: table)
+        let schema = try SQLStringLiteral.quote(table.schema)
+        let name = try SQLStringLiteral.quote(table.name)
+        let indexes = try await query("""
+        SELECT INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME, COLLATION, CARDINALITY, SUB_PART, INDEX_TYPE, INDEX_COMMENT
+        FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = \(schema) AND TABLE_NAME = \(name)
+        ORDER BY INDEX_NAME, SEQ_IN_INDEX
+        """)
+        let foreignKeys = try await query("""
+        SELECT CONSTRAINT_NAME, COLUMN_NAME, REFERENCED_TABLE_SCHEMA, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
+        FROM information_schema.KEY_COLUMN_USAGE
+        WHERE TABLE_SCHEMA = \(schema) AND TABLE_NAME = \(name) AND REFERENCED_TABLE_NAME IS NOT NULL
+        ORDER BY CONSTRAINT_NAME, ORDINAL_POSITION
+        """)
+        let create = try await query("SHOW CREATE TABLE \(qualified)")
+        return TableStructure(columns: columns, indexes: indexes, foreignKeys: foreignKeys, createSQL: create.rows.first?.dropFirst().first ?? "")
+    }
+
     func close() async { try? await connection.close().get() }
+    func cancel() async { try? await connection.channel.close().get() }
 
     private func firstColumn(of sql: String) async throws -> [String] {
-        let rows = try await connection.simpleQuery(sql).get()
+        let rows = try await connection.textQuery(sql).rows
         return rows.compactMap { row in
             guard let name = row.columnDefinitions.first?.name else { return nil }
             return Self.display(row.column(name))
@@ -137,7 +179,7 @@ final class MySQLSession: DatabaseSession, @unchecked Sendable {
     }
 
     private static func display(_ data: MySQLData?) -> String {
-        guard let data else { return "NULL" }
+        guard let data, data.buffer != nil else { return "NULL" }
         if let value = data.string { return value }
         if let value = data.int64 { return String(value) }
         if let value = data.uint64 { return String(value) }
