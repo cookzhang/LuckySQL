@@ -5,6 +5,8 @@ struct SchemaSidebar: View {
     @Environment(\.openSettings) private var openSettings
     @State private var expandedConnections = Set<UUID>()
     @State private var expandedSchemas = Set<String>()
+    @State private var search = ""
+    @State private var favoritesOnly = false
 
     var body: some View {
         List {
@@ -26,6 +28,13 @@ struct SchemaSidebar: View {
             }
         }
         .navigationTitle("Connections")
+        .safeAreaInset(edge: .top) {
+            HStack(spacing: 8) {
+                TextField("Filter loaded tables", text: $search).textFieldStyle(.roundedBorder)
+                Button { favoritesOnly.toggle() } label: { Image(systemName: favoritesOnly ? "star.fill" : "star") }
+                    .buttonStyle(.borderless).foregroundStyle(favoritesOnly ? .orange : .secondary).help("Show favorite tables")
+            }.padding(10).background(.bar)
+        }
         .safeAreaInset(edge: .bottom) {
             Button {
                 openSettings()
@@ -47,7 +56,7 @@ struct SchemaSidebar: View {
                         }
                     }
                 }
-                .disabled(!model.isConnected)
+                .disabled(!model.isConnected || model.isRunning)
             }
         }
         .onAppear { expandConnectedProfile(model.connectedProfileID) }
@@ -101,18 +110,28 @@ struct SchemaSidebar: View {
             Text("No tables or views")
                 .foregroundStyle(.secondary)
         case .loaded:
-            ForEach(schema.tables) { table in
+            ForEach(schema.tables.filter { (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search)) && (!favoritesOnly || model.isFavorite($0)) }) { table in
                 DisclosureGroup {
                     tableStructure(for: table)
                 } label: {
                     HStack {
-                        Label(table.name, systemImage: "tablecells")
+                        Button { model.browse(table) } label: {
+                            Label(table.name, systemImage: model.isFavorite(table) ? "star.fill" : "tablecells")
+                                .foregroundStyle(model.selectedTable == table ? Color.accentColor : .primary)
+                        }.buttonStyle(.plain).disabled(model.isRunning).help("Preview \(table.id)")
                         Spacer()
                         Button("Browse", systemImage: "arrow.right.circle") { model.browse(table) }
                             .labelStyle(.iconOnly)
                             .buttonStyle(.plain)
                             .help("Browse rows")
                     }
+                }
+                .contextMenu {
+                    Button("Preview Data") { model.browse(table) }.disabled(model.isRunning)
+                    Button("Preview Structure") { model.showStructure(table) }.disabled(model.isRunning)
+                    Divider()
+                    Button(model.isFavorite(table) ? "Remove Favorite" : "Add Favorite") { model.toggleFavorite(table) }
+                    Button("Copy Qualified Name") { model.copy("`\(table.schema.replacingOccurrences(of: "`", with: "``"))`.`\(table.name.replacingOccurrences(of: "`", with: "``"))`") }
                 }
             }
         }
@@ -163,6 +182,7 @@ struct SchemaSidebar: View {
             expandedConnections.contains(profile.id)
         } set: { expanded in
             if expanded {
+                guard !model.isRunning else { return }
                 expandedConnections = [profile.id]
                 if model.connectedProfileID != profile.id && model.connectingProfileID != profile.id {
                     expandedSchemas.removeAll()

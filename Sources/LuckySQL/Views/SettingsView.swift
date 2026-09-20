@@ -36,18 +36,21 @@ struct SettingsView: View {
                         TextField("Port", value: profile.port, format: .number.grouping(.never))
                         TextField("User", text: profile.username)
                         SecureField("Password", text: $model.password)
+                        if model.isLoadingPassword { Text("Waiting for Keychain authorization…").font(.caption).foregroundStyle(.secondary) }
                         TextField("Default database", text: profile.database)
                     }
                     HStack {
                         Spacer()
                         Button("Save & Connect") { model.saveProfiles(); model.connect() }
                             .keyboardShortcut(.defaultAction)
+                            .disabled(model.isRunning)
                     }
                 } else { ContentUnavailableView("Select a connection", systemImage: "server.rack") }
             }
             .padding(20)
         }
         .frame(width: 650, height: 360)
+        .disabled(model.isRunning)
     }
 
     private var binding: Binding<ConnectionProfile>? {

@@ -31,10 +31,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          notes_args=()
+          if [[ -f "Docs/releases/${GITHUB_REF_NAME}.md" ]]; then
+            notes_args+=(--notes-file "Docs/releases/${GITHUB_REF_NAME}.md")
+          fi
           gh release create "$GITHUB_REF_NAME" \
             "dist/LuckySQL-v${VERSION}-macos-arm64.zip" \
             "dist/LuckySQL-v${VERSION}-macos-arm64.zip.sha256" \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --title "LuckySQL $GITHUB_REF_NAME" \
+            "${notes_args[@]}" \
             --generate-notes
