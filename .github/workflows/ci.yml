@@ -1,0 +1,22 @@
+name: Test pull requests
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: sudo xcode-select --switch /Applications/Xcode_16.2.app/Contents/Developer
+      - name: Run regression tests
+        run: swift test
+      - name: Compile optimized application
+        run: swift build -c release --arch arm64

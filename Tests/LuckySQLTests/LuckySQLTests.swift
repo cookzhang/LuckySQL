@@ -139,6 +139,21 @@ final class LuckySQLTests: XCTestCase {
         model.disconnect()
     }
 
+    func testCompletionLoadsReferencedTableWithoutBrowsing() async throws {
+        let name = "LuckySQLTests.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let model = AppModel(profileStore: ProfileStore(defaults: defaults), keychain: StubPasswordStore(), driver: StubDriver(session: StubSession()), workspaceStore: WorkspaceStore(defaults: defaults))
+        model.connect(); try await waitUntil { model.isConnected && !model.isRunning }
+        model.sql = "SELECT o. FROM orders o"
+        await model.loadCompletionMetadata()
+        XCTAssertNil(model.selectedTable)
+        XCTAssertEqual(model.tableColumns["shop.orders"]?.map(\.name), ["id", "status"])
+        let caret = (model.sql as NSString).range(of: "o.").location + 2
+        XCTAssertEqual(SQLCompletion.request(sql: model.sql, caret: caret, catalog: model.completionCatalog, automatic: true)?.candidates, ["`status`", "id"])
+        model.disconnect()
+    }
+
     private func waitUntil(
         timeoutNanoseconds: UInt64 = 2_000_000_000,
         condition: @escaping @MainActor () -> Bool

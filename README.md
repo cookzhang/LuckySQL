@@ -8,7 +8,7 @@ LuckySQL is a free, open-source, native macOS MySQL workbench built with Swift a
 - Passwords stored in macOS Keychain; non-secret profile fields stored in UserDefaults
 - Pure-Swift MySQL connection through MySQLNIO; no `libmysqlclient` installation
 - Database/schema/table navigation tree with column types, nullability, and primary-key details
-- Color-coded SQL editor with line numbers, native find, completion (**Control–Space**), and basic formatting
+- Color-coded SQL editor with line numbers, native find, automatic keyword/schema/table/alias-column suggestions (**Control–Space** or **Option–Escape** opens suggestions; **Tab/Return** accepts, **Escape** dismisses), and basic formatting
 - Multiple auto-saved query drafts; **Command–Return** runs the selection/current statement, **Shift–Command–Return** runs all statements
 - Local query history, SQL files, snippets, EXPLAIN, and server information shortcuts
 - Native virtualized result grid with resizable columns, keyboard selection, copying, and full cell previews
@@ -17,6 +17,7 @@ LuckySQL is a free, open-source, native macOS MySQL workbench built with Swift a
 - Primary-key-based cell editing, explicit NULL values, confirmed row deletion, and INSERT SQL drafts
 - CSV/JSON export of the current result/page, TSV copying, favorites, and loaded-table search
 - SQL write confirmation, multi-result selection, preview row limits, and stop/disconnect
+- In-app GitHub release checks, SHA-256-verified downloads, confirmed installation with a retained backup, and restart
 - Clear driver/session boundary for future database engines
 
 ## Requirements
@@ -30,6 +31,10 @@ Apple Silicon is the primary target. The code has no architecture-specific assum
 ## Download
 
 Prebuilt Apple Silicon packages are available from [GitHub Releases](https://github.com/cookzhang/LuckySQL/releases). The current community build uses an ad-hoc signature and is not notarized by Apple. After downloading, right-click **LuckySQL.app**, choose **Open**, and confirm the first launch if macOS displays a security prompt.
+
+In builds containing the updater, choose **LuckySQL → Check for Updates…**. Stable releases are compared numerically; a newer compatible arm64 archive is downloaded only on request. Before installation, LuckySQL checks the SHA-256 digest supplied by GitHub's HTTPS API, archive paths, app identity/version, minimum macOS version, architecture, and code-signature integrity. This is not an independent publisher signature or Apple notarization. The GitHub repository remains the trust source.
+
+Installation needs a writable, non-translocated app location (move the app to Applications first). It saves drafts and retains a uniquely named previous-app backup beside the installation; installation and restart are disabled during database operations. No administrator password is requested. Network/checksum/validation failures leave the existing app untouched. A verified download can also be revealed for manual installation. Old versions without this menu require one manual upgrade before they can update in-app.
 
 ## Build and run
 
@@ -69,10 +74,12 @@ To run the optional integration test against a local test server, set
 it verifies metadata, empty results, Unicode/NULL values, writes, and sequential
 queries after a server error.
 
+The integration test also verifies the 1,000-row server-side limit, smaller explicit limits, and offsets. Set `LUCKYSQL_TEST_UPDATE_DOWNLOAD=1` to additionally download and validate the actual latest GitHub package (without installing it). Installer tests use disposable signed app fixtures and verify that the previous app is retained.
+
 To create a distributable Apple Silicon app bundle locally:
 
 ```sh
-./scripts/package-release.sh 0.2.0
+./scripts/package-release.sh 0.2.1
 ```
 
 The archive and its SHA-256 checksum are written to `dist/`.
@@ -98,7 +105,8 @@ See the detailed [HeidiSQL comparison and acceptance checklist](Docs/HEIDISQL_PA
 
 - One active connection; multiple query tabs share it
 - Direct, non-TLS TCP only
-- SQL results retain at most 10,000 rows (remaining packets are drained); exports contain only retained rows/current page
+- SQL results retain at most 1,000 rows. SELECT/CTE/UNION previews add or cap the outer LIMIT, preserve smaller limits and offsets, and leave SQL drafts and write statements unchanged. SHOW/other non-SELECT results have a client-side cap; remaining packets are drained. Exports contain only retained rows/current page
+- Completion uses the current database and referenced tables, loading metadata without requiring a table click; it is not a full SQL scope/type resolver (nested alias shadowing and CTE-derived columns remain unsupported)
 - No streaming full-database import/export or visual schema designer yet
 - Stop closes the connection, not a server-side KILL QUERY; writes already sent can still complete
 - No transaction editing / concurrent-change detection; use a least-privilege account
