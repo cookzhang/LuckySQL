@@ -22,6 +22,7 @@ actor SQLAnalysisService {
     private var order: [String] = []
 
     func completion(_ sql: String, document: String, caret: Int, catalog: SQLCompletionCatalog, automatic: Bool) -> SQLCompletionRequest? {
+        guard !Task.isCancelled else { return nil }
         let analysis = analyze(sql, document: document)
         let separators = analysis.tokens.filter { $0.kind == .symbol && $0.text == ";" }
         let start = separators.last(where: { NSMaxRange($0.range) < caret }).map { NSMaxRange($0.range) } ?? 0
@@ -34,6 +35,9 @@ actor SQLAnalysisService {
     }
 
     func analyze(_ sql: String, document: String) -> SQLAnalysis {
+        // Cancelled requests can wait in the actor mailbox while an earlier
+        // large document is scanned. Discard them before doing more CPU work.
+        guard !Task.isCancelled else { return SQLAnalysis(sql: sql, tokens: [], lineStarts: [0]) }
         if let cached = cache[document], cached.sql == sql { return cached }
         var tokens: [SQLToken]
         if let old = cache[document] {

@@ -101,6 +101,18 @@ final class ExperienceTests: XCTestCase {
         XCTAssertEqual(editor.string, "")
     }
 
+    @MainActor func testCellPreviewUsesActiveRowInsideMultipleSelection() {
+        let result = QueryResult(columns: ["id", "value"], rows: [["1", "first"], ["2", "second"]], elapsed: .zero, message: "")
+        var inspected: CellAddress?
+        let coordinator = DataGrid.Coordinator(DataGrid(result: result, inspect: { inspected = CellAddress(row: $0, column: $1) }))
+        let table = CopyableTableView(); table.dataSource = coordinator; table.delegate = coordinator; table.allowsMultipleSelection = true
+        coordinator.table = table; coordinator.reload()
+        table.selectRowIndexes(IndexSet([0, 1]), byExtendingSelection: false)
+        table.activeRow = 1; table.activeColumn = 1
+        coordinator.preview()
+        XCTAssertEqual(inspected, CellAddress(row: 1, column: 1))
+    }
+
     @MainActor func testOrderedBackgroundPersistenceCanFlushAndReload() throws {
         let name = "LuckySQLExperience.\(UUID())", defaults = try XCTUnwrap(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }

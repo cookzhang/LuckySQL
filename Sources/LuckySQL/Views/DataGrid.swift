@@ -92,6 +92,7 @@ struct DataGrid: NSViewRepresentable {
             table.reloadData()
             let indices = parent.result.rows.indices.filter { rowKey($0).map(selection.contains) == true }
             table.selectRowIndexes(IndexSet(indices), byExtendingSelection: false)
+            (table as? CopyableTableView)?.activeRow = table.selectedRow
             if let scroll = table.enclosingScrollView {
                 let offset = NSPoint(x: min(restored.x, max(0, table.bounds.width - scroll.contentView.bounds.width)), y: min(restored.y, max(0, table.bounds.height - scroll.contentView.bounds.height)))
                 scroll.contentView.scroll(to: offset); scroll.reflectScrolledClipView(scroll.contentView)
@@ -123,7 +124,7 @@ struct DataGrid: NSViewRepresentable {
         }
         private var cell: (row: Int, column: Int)? {
             guard let table = table as? CopyableTableView else { return nil }
-            let row = table.selectedRow >= 0 ? table.selectedRow : table.clickedRow
+            let row = table.selectedRowIndexes.contains(table.activeRow) ? table.activeRow : table.selectedRow
             let visibleColumn = max(0, min(table.activeColumn, table.tableColumns.count - 1))
             guard parent.result.rows.indices.contains(row), table.tableColumns.indices.contains(visibleColumn),
                   let column = Int(table.tableColumns[visibleColumn].identifier.rawValue), parent.result.columns.indices.contains(column) else { return nil }
@@ -153,33 +154,38 @@ struct DataGrid: NSViewRepresentable {
     }
 }
 
-private final class CopyableTableView: NSTableView {
+final class CopyableTableView: NSTableView {
     var copyRows: (() -> Void)?
     var copyCell: (() -> Void)?
     var previewCell: (() -> Void)?
     var activeColumn = 0 { didSet { needsDisplay = true } }
+    var activeRow = -1
     override func mouseDown(with event: NSEvent) {
         activeColumn = max(0, column(at: convert(event.locationInWindow, from: nil)))
+        activeRow = row(at: convert(event.locationInWindow, from: nil))
         super.mouseDown(with: event)
     }
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
         activeColumn = max(0, column(at: point))
         let row = row(at: point)
+        activeRow = row
         if row >= 0, !selectedRowIndexes.contains(row) { selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false) }
         return super.menu(for: event)
     }
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        guard selectedRow >= 0, tableColumns.indices.contains(activeColumn) else { return }
+        let row = selectedRowIndexes.contains(activeRow) ? activeRow : selectedRow
+        guard row >= 0, tableColumns.indices.contains(activeColumn) else { return }
         NSColor.controlAccentColor.setStroke()
-        let path = NSBezierPath(rect: frameOfCell(atColumn: activeColumn, row: selectedRow).insetBy(dx: 1, dy: 1)); path.lineWidth = 2; path.stroke()
+        let path = NSBezierPath(rect: frameOfCell(atColumn: activeColumn, row: row).insetBy(dx: 1, dy: 1)); path.lineWidth = 2; path.stroke()
     }
     override func keyDown(with event: NSEvent) {
         if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "c" { if event.modifierFlags.contains(.shift) { copyRows?() } else { copyCell?() }; return }
         if event.keyCode == 123 || event.keyCode == 124 { activeColumn = max(0, min(tableColumns.count - 1, activeColumn + (event.keyCode == 123 ? -1 : 1))); scrollColumnToVisible(activeColumn); return }
         if event.keyCode == 36 || event.keyCode == 49 { previewCell?(); return }
         super.keyDown(with: event)
+        activeRow = selectedRow
         needsDisplay = true
     }
 }
