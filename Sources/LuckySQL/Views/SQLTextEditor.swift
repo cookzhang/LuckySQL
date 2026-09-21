@@ -4,7 +4,7 @@ import SwiftUI
 struct SQLTextEditor: NSViewRepresentable {
     @Binding var text: String
     var selection: Binding<NSRange> = .constant(NSRange(location: 0, length: 0))
-    var completionWords: [String] = Array(SQLTools.keywords)
+    var completionCatalog = SQLCompletionCatalog()
     var isEditable = true
     var documentID = ""
 
@@ -18,6 +18,7 @@ struct SQLTextEditor: NSViewRepresentable {
         let editor = CodeTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 200))
         editor.clipsToBounds = true
         editor.delegate = context.coordinator
+        editor.completionCatalog = completionCatalog
         editor.isRichText = false; editor.isEditable = isEditable
         editor.isAutomaticQuoteSubstitutionEnabled = false
         editor.isAutomaticDashSubstitutionEnabled = false
@@ -48,7 +49,8 @@ struct SQLTextEditor: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let coordinator = context.coordinator
         coordinator.parent = self
-        guard let editor = scroll.documentView as? NSTextView else { return }
+        guard let editor = scroll.documentView as? CodeTextView else { return }
+        editor.completionCatalog = completionCatalog
         editor.isEditable = isEditable
         if editor.hasMarkedText() { return }
         coordinator.updating = true
@@ -56,6 +58,7 @@ struct SQLTextEditor: NSViewRepresentable {
         if editor.string != text || coordinator.documentID != documentID {
             let changedDocument = coordinator.documentID != documentID
             if changedDocument {
+                editor.dismissCompletions()
                 editor.string = text; editor.undoManager?.removeAllActions()
             } else {
                 editor.insertText(text, replacementRange: NSRange(location: 0, length: (editor.string as NSString).length))
@@ -92,11 +95,6 @@ struct SQLTextEditor: NSViewRepresentable {
             guard !updating, let editor = notification.object as? NSTextView else { return }
             parent.selection.wrappedValue = editor.selectedRange()
         }
-        func textView(_ textView: NSTextView, completions words: [String], forPartialWordRange charRange: NSRange, indexOfSelectedItem index: UnsafeMutablePointer<Int>?) -> [String] {
-            let prefix = (textView.string as NSString).substring(with: charRange)
-            index?.pointee = 0
-            return parent.completionWords.filter { $0.lowercased().hasPrefix(prefix.lowercased()) }.prefix(100).map { $0 }
-        }
         func highlight(_ editor: NSTextView) {
             guard !editor.hasMarkedText(), let layout = editor.layoutManager else { return }
             let range = NSRange(location: 0, length: (editor.string as NSString).length)
@@ -130,14 +128,101 @@ private final class CodeScrollView: NSScrollView {
     }
 }
 
-private final class CodeTextView: NSTextView {
+final class CodeTextView: NSTextView {
+    var completionCatalog = SQLCompletionCatalog() {
+        didSet {
+            if (awaitingMetadata || suggestions.isShown),
+               oldValue.schemas != completionCatalog.schemas || oldValue.columns != completionCatalog.columns {
+                DispatchQueue.main.async { [weak self] in self?.showCompletions(automatic: true) }
+            }
+        }
+    }
+    private var completionWork: DispatchWorkItem?
+    private let suggestions = NSPopover()
+    private var request: SQLCompletionRequest?
+    private var selectedSuggestion = 0
+    private var completionSource = ""
+    private var awaitingMetadata = false
+
     override func keyDown(with event: NSEvent) {
-        if event.modifierFlags.contains(.control), event.charactersIgnoringModifiers == " " { complete(nil); return }
+        if (event.modifierFlags.contains(.control) && event.charactersIgnoringModifiers == " ") || (event.modifierFlags.contains(.option) && event.keyCode == 53) { showCompletions(automatic: false); return }
+        if suggestions.isShown {
+            if event.keyCode == 53 { dismissCompletions(); return }
+            if event.keyCode == 125 || event.keyCode == 126, let request {
+                selectedSuggestion = (selectedSuggestion + (event.keyCode == 125 ? 1 : request.candidates.count - 1)) % request.candidates.count
+                renderSuggestions(); return
+            }
+            if event.keyCode == 36 || event.keyCode == 48 { acceptCompletion(selectedSuggestion); return }
+            dismissCompletions()
+        }
+        let previous = string
         super.keyDown(with: event)
+        completionWork?.cancel()
+        guard string != previous, !hasMarkedText(), selectedRange().length == 0,
+              !event.modifierFlags.contains(.command), event.keyCode != 51, event.keyCode != 117 else { return }
+        let work = DispatchWorkItem { [weak self] in self?.showCompletions(automatic: true) }
+        completionWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: work)
+    }
+    override func mouseDown(with event: NSEvent) { dismissCompletions(); super.mouseDown(with: event) }
+    override func resignFirstResponder() -> Bool { dismissCompletions(); return super.resignFirstResponder() }
+    override func complete(_ sender: Any?) { showCompletions(automatic: false) }
+
+    func dismissCompletions() { completionWork?.cancel(); suggestions.close(); request = nil; awaitingMetadata = false }
+    func showCompletions(automatic: Bool) {
+        guard isEditable, !hasMarkedText(), selectedRange().length == 0, window?.firstResponder === self else { dismissCompletions(); return }
+        guard let next = SQLCompletion.request(sql: string, caret: selectedRange().location, catalog: completionCatalog, automatic: automatic) else {
+            dismissCompletions(); awaitingMetadata = true; return
+        }
+        awaitingMetadata = false
+        request = next; completionSource = string; selectedSuggestion = 0
+        suggestions.behavior = .applicationDefined; suggestions.animates = false
+        renderSuggestions()
+        let screen = firstRect(forCharacterRange: selectedRange(), actualRange: nil)
+        guard let window else { return }
+        let rect = convert(window.convertFromScreen(screen), from: nil)
+        suggestions.show(relativeTo: rect, of: self, preferredEdge: .maxY)
+    }
+    private func renderSuggestions() {
+        guard let request else { return }
+        suggestions.contentViewController = NSHostingController(rootView: CompletionSuggestions(words: request.candidates, selected: selectedSuggestion) { [weak self] in self?.acceptCompletion($0) })
+    }
+    private func acceptCompletion(_ index: Int) {
+        guard let request, request.candidates.indices.contains(index), string == completionSource,
+              selectedRange().location == request.caret else { dismissCompletions(); return }
+        let word = request.candidates[index]
+        dismissCompletions()
+        window?.makeFirstResponder(self)
+        insertText(word, replacementRange: request.range)
     }
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         needsDisplay = true
+    }
+}
+
+private struct CompletionSuggestions: View {
+    let words: [String]
+    let selected: Int
+    let accept: (Int) -> Void
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(words.indices, id: \.self) { index in
+                            Button { accept(index) } label: {
+                                Text(words[index]).font(.system(size: 12, design: .monospaced)).lineLimit(1)
+                                    .frame(maxWidth: .infinity, alignment: .leading).padding(6)
+                                    .background(index == selected ? Color.accentColor.opacity(0.2) : .clear)
+                            }.buttonStyle(.plain).id(index)
+                        }
+                    }
+                }.onChange(of: selected) { _, value in proxy.scrollTo(value) }
+            }
+            Divider()
+            Text("↑↓ Select · Tab/Return Insert · Esc Dismiss").font(.system(size: 10)).foregroundStyle(.secondary).padding(6)
+        }.frame(width: 310, height: CGFloat(min(words.count, 8) * 29 + 28))
     }
 }
 

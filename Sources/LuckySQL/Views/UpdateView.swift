@@ -1,0 +1,39 @@
+import SwiftUI
+
+struct UpdateView: View {
+    @ObservedObject var updater: AppUpdater
+    @EnvironmentObject private var model: AppModel
+    @State private var confirmInstall = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label("LuckySQL Updates", systemImage: "arrow.down.circle").font(.title2.bold())
+            Text("Installed version: \(updater.currentVersion)").foregroundStyle(.secondary)
+            HStack { if updater.busy { ProgressView().controlSize(.small) }; Text(updater.status).textSelection(.enabled) }
+            if let error = updater.error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
+            if let release = updater.release {
+                ScrollView { Text(release.body ?? "No release notes.").frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled) }.frame(maxHeight: 220)
+            }
+            Text("Updates come only from cookzhang/LuckySQL on GitHub and are verified against its SHA-256 digest. Current releases are ad-hoc signed, not Apple-notarized. Installation requires a writable app folder; no administrator password is requested.")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Link("GitHub Releases", destination: URL(string: "https://github.com/cookzhang/LuckySQL/releases")!)
+                Spacer()
+                if updater.busy { Button("Cancel") { updater.cancel() }.disabled(updater.status.hasPrefix("Installing")) }
+                else if updater.installed {
+                    Button("Restart LuckySQL") { updater.restart(model: model) }.disabled(model.isRunning).buttonStyle(.borderedProminent)
+                } else if let app = updater.downloadedApp {
+                    Button("Reveal Download") { NSWorkspace.shared.activateFileViewerSelecting([app]) }
+                    Button("Install Update…") { confirmInstall = true }.disabled(model.isRunning).buttonStyle(.borderedProminent)
+                } else if updater.release != nil {
+                    Button("Download Update") { updater.download() }.buttonStyle(.borderedProminent)
+                } else { Button("Check Again") { updater.check() } }
+                Button("Close") { updater.isPresented = false }.disabled(updater.busy)
+            }
+            if model.isRunning { Text("Wait for the active database operation to finish before installing or restarting.").font(.caption) }
+        }.padding(24).frame(width: 640)
+            .interactiveDismissDisabled(updater.busy)
+            .confirmationDialog("Install this update?", isPresented: $confirmInstall) {
+                Button("Install Verified Update") { updater.install(model: model) }
+            } message: { Text("Your current app will be replaced, with a backup retained beside it. SQL drafts are saved first. Restart when installation finishes.") }
+    }
+}

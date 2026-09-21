@@ -159,6 +159,30 @@ final class MySQLCompatibilityTests: XCTestCase {
                 // must still work: no protocol packets may be left unread.
                 let remaining = try await session.query("SELECT * FROM \(qualified) ORDER BY id")
                 XCTAssertEqual(remaining.rows, [["1", "updated"], ["2", "NULL"]])
+                // Check both retained rows and server-side execution: FOUND_ROWS
+                // must report 1,000, not all 1,205 rows drained by the client.
+                _ = try await session.query("DELETE FROM \(qualified)")
+                let values = (1...1205).map { "(\($0), 'row')" }.joined(separator: ",")
+                _ = try await session.query("INSERT INTO \(qualified) VALUES \(values)")
+                let limited = try await session.query("SELECT * FROM \(qualified) ORDER BY id")
+                XCTAssertEqual(limited.rows.count, 1000)
+                let serverCount = try await session.query("SELECT FOUND_ROWS()")
+                XCTAssertEqual(serverCount.rows, [["1000"]])
+                let offset = try await session.query("SELECT id FROM \(qualified) ORDER BY id LIMIT 20,5000")
+                XCTAssertEqual(offset.rows.count, 1000)
+                XCTAssertEqual(offset.rows.first, ["21"])
+                let small = try await session.query("SELECT id FROM \(qualified) ORDER BY id LIMIT 2 OFFSET 1200")
+                XCTAssertEqual(small.rows, [["1201"], ["1202"]])
+                let nested = try await session.query("SELECT * FROM (SELECT id FROM \(qualified) LIMIT 3) s")
+                XCTAssertEqual(nested.rows.count, 3)
+                let union = try await session.query("SELECT id FROM \(qualified) UNION ALL SELECT id FROM \(qualified)")
+                XCTAssertEqual(union.rows.count, 1000)
+                let locked = try await session.query("SELECT * FROM \(qualified) FOR UPDATE")
+                XCTAssertEqual(locked.rows.count, 1000)
+                if version.rows.first?.first?.hasPrefix("8.") == true {
+                    let cte = try await session.query("WITH c AS (SELECT * FROM \(qualified)) SELECT * FROM c")
+                    XCTAssertEqual(cte.rows.count, 1000)
+                }
             } catch {
                 _ = try? await session.query("DROP TABLE \(qualified)")
                 throw error

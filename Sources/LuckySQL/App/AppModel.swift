@@ -42,6 +42,8 @@ final class AppModel: ObservableObject {
     private var lastBrowseSQL = ""
     private var draftSaveTask: Task<Void, Never>?
     private var passwordLoadTask: Task<Void, Never>?
+    private var completionTask: Task<Void, Never>?
+    private var completionFailures = Set<String>()
 
     init(profileStore: ProfileStore? = nil, keychain: PasswordStoring = KeychainStore(), driver: any DatabaseDriver = MySQLDriver(), workspaceStore: WorkspaceStore? = nil) {
         let profileStore = profileStore ?? ProfileStore()
@@ -62,6 +64,7 @@ final class AppModel: ObservableObject {
         get { queryTabs[activeTabIndex].sql }
         set {
             queryTabs[activeTabIndex].sql = newValue
+            scheduleCompletionMetadata()
             draftSaveTask?.cancel()
             draftSaveTask = Task { [weak self] in
                 try? await Task.sleep(for: .milliseconds(500))
@@ -75,8 +78,44 @@ final class AppModel: ObservableObject {
         set { queryTabs[activeTabIndex].selection = newValue }
     }
     var result: QueryResult { section == .query ? queryTabs[activeTabIndex].result : browseResult }
-    var completionWords: [String] {
-        Array(Set(schemas.flatMap { $0.tables.map(\.name) } + (selectedTable.flatMap { tableColumns[$0.id] } ?? []).map(\.name) + Array(SQLTools.keywords))).sorted()
+    var completionCatalog: SQLCompletionCatalog {
+        SQLCompletionCatalog(schemas: schemas, columns: tableColumns, database: selectedDatabase)
+    }
+    func scheduleCompletionMetadata() {
+        completionTask?.cancel()
+        completionTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled, let self, self.isConnected else { return }
+            await self.loadCompletionMetadata()
+        }
+    }
+    func loadCompletionMetadata() async {
+        guard isConnected else { return }
+        let epoch = connectionAttemptID
+        let database = selectedDatabase
+        if !database.isEmpty { await loadTables(in: database) }
+        let statement = SQLTools.executable(sql, selection: sqlSelection)
+        let references = SQLCompletion.references(statement, database: database)
+        for name in Set(references.map { $0.table.schema }) {
+            guard !Task.isCancelled, epoch == connectionAttemptID else { return }
+            await loadTables(in: name)
+        }
+        // Also load a qualified schema as soon as the user types schema.
+        let tokens = SQLTools.tokens(statement)
+        for schema in schemas where tokens.contains(where: { $0.text == schema.name || $0.text == "`\(schema.name)`" }) {
+            guard !Task.isCancelled, epoch == connectionAttemptID else { return }
+            await loadTables(in: schema.name)
+        }
+        for reference in references {
+            guard !Task.isCancelled, epoch == connectionAttemptID else { return }
+            let table = reference.table
+            guard tableColumns[table.id] == nil, !completionFailures.contains(table.id),
+                  schemas.contains(where: { $0.tables.contains(table) }) else { continue }
+            do {
+                let columns = try await requireSession().columns(in: table)
+                if epoch == connectionAttemptID { tableColumns[table.id] = columns }
+            } catch { if epoch == connectionAttemptID { completionFailures.insert(table.id) } }
+        }
     }
     var selectedProfile: ConnectionProfile? {
         get { profiles.first { $0.id == selectedProfileID } }
@@ -168,6 +207,7 @@ final class AppModel: ObservableObject {
         Task { if wasRunning { await old?.cancel() } else { await old?.close() } }
     }
     private func resetMetadata() {
+        completionTask?.cancel(); completionFailures = []
         schemas = []; tableColumns = [:]; selectedTable = nil
         browseResult = .empty; resultTable = nil; structure = TableStructure(); structureState = .idle
         for index in queryTabs.indices { queryTabs[index].result = .empty; queryTabs[index].results = [] }

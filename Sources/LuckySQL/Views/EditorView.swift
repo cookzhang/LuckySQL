@@ -44,13 +44,14 @@ struct EditorView: View {
                 Button("History", systemImage: "clock.arrow.circlepath") { model.showHistory = true }
             }.controlSize(.small).padding(.horizontal, 12).frame(height: 40)
             Divider()
-            SQLTextEditor(text: $model.sql, selection: $model.sqlSelection, completionWords: model.completionWords, documentID: model.activeTabID.uuidString)
+            SQLTextEditor(text: $model.sql, selection: $model.sqlSelection, completionCatalog: model.completionCatalog, documentID: model.activeTabID.uuidString)
             HStack {
-                Text("⌘↩ Current / selection   ⇧⌘↩ All   ⌃Space Complete   ⌘F Find")
+                Text("⌘↩ Run   ⇧⌘↩ All   ⌃Space / ⌥Esc Complete   ⌘F Find")
                 Spacer()
-                Text("\(model.sql.components(separatedBy: "\n").count) lines")
+                Text("Preview ≤ 1,000 rows · \(model.sql.components(separatedBy: "\n").count) lines")
             }.font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 12).frame(height: 24).background(.bar)
         }
+        .task(id: model.selectedDatabase + model.activeTabID.uuidString + String(model.isConnected)) { await model.loadCompletionMetadata() }
         .confirmationDialog("Close this query tab?", isPresented: Binding(get: { closingTab != nil }, set: { if !$0 { closingTab = nil } })) {
             Button("Close Tab", role: .destructive) { if let id = closingTab { model.closeTab(id) }; closingTab = nil }
         } message: { Text("Its local draft will be removed. Save it to a SQL file first if you want to keep it.") }

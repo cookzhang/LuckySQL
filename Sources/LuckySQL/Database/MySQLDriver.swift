@@ -65,7 +65,8 @@ final class MySQLSession: DatabaseSession, @unchecked Sendable {
     func query(_ sql: String) async throws -> QueryResult {
         let clock = ContinuousClock()
         let start = clock.now
-        let response = try await connection.textQuery(sql, rowLimit: 10_000)
+        let previewSQL = try SQLPreview.query(sql)
+        let response = try await connection.textQuery(previewSQL, rowLimit: SQLPreview.rowLimit)
         let rows = response.rows
         let columns = response.columns.map(\.name)
         var nullCells = Set<CellAddress>()
@@ -79,7 +80,7 @@ final class MySQLSession: DatabaseSession, @unchecked Sendable {
             }
         }
         let elapsed = start.duration(to: clock.now)
-        let message = columns.isEmpty ? "\(response.affectedRows) affected row(s)" : response.rowCount > values.count ? "Showing first \(values.count) of \(response.rowCount) rows (preview limit)" : "\(values.count) row(s)"
+        let message = columns.isEmpty ? "\(response.affectedRows) affected row(s)" : values.count == SQLPreview.rowLimit ? "\(values.count) row(s) · 1,000-row preview limit" : "\(values.count) row(s)"
         return QueryResult(columns: columns, rows: values, elapsed: elapsed, message: message, nullCells: nullCells)
     }
 
