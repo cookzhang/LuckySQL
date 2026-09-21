@@ -24,9 +24,9 @@ struct TableBrowserView: View {
                 ResultGrid()
                 Divider()
                 HStack(spacing: 12) {
-                    Button("Refresh", systemImage: "arrow.clockwise") { model.refreshData() }
+                    Button("Refresh", systemImage: "arrow.clockwise") { model.refreshData(forceMetadata: true) }
                     Button("Insert SQL…", systemImage: "plus") { model.generateInsert() }
-                    Text(model.canMutateSelectedTable ? "Double-click to preview / edit · click a header to sort" : "Read-only: no usable primary key")
+                    Text(model.canMutateSelectedTable ? "Enter: preview · ⌘C: cell · ⇧⌘C: rows" : "Read-only: protected connection, partial result or no usable primary key")
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     Spacer()
                     Picker("Rows", selection: $model.browseOptions.pageSize) { Text("100").tag(100); Text("200").tag(200); Text("500").tag(500) }.frame(width: 110)
@@ -52,9 +52,9 @@ struct StructureView: View {
         } else {
             VStack(spacing: 0) {
                 HStack {
-                    Picker("Structure details", selection: $page) { ForEach(pages, id: \.self) { Text($0).tag($0) } }.pickerStyle(.segmented).frame(maxWidth: 440)
+                    Picker("Structure details", selection: $page) { ForEach(pages, id: \.self) { Text(LocalizedStringKey($0)).tag($0) } }.pickerStyle(.segmented).frame(maxWidth: 440)
                     Spacer()
-                    Button("Refresh", systemImage: "arrow.clockwise") { model.showStructure() }.disabled(model.isRunning)
+                    Button("Refresh", systemImage: "arrow.clockwise") { model.showStructure(force: true) }.disabled(model.isRunning)
                     Menu("SQL") {
                         Button("Copy CREATE SQL") { model.copy(model.structure.createSQL) }
                         Button("Open CREATE SQL in New Tab") { model.newQuery(sql: model.structure.createSQL, title: "DDL · \(model.selectedTable?.name ?? "")") }
@@ -78,7 +78,7 @@ struct StructureView: View {
         }
     }
     private var columnsResult: QueryResult {
-        QueryResult(columns: ["Column", "Type", "Key", "Nullable", "Default", "Extra", "Comment"], rows: model.structure.columns.map {
+        QueryResult(id: model.structure.id, columns: ["Column", "Type", "Key", "Nullable", "Default", "Extra", "Comment"], rows: model.structure.columns.map {
             [$0.name, $0.dataType, $0.isPrimaryKey ? "PRIMARY" : "", $0.isNullable ? "YES" : "NO", $0.defaultValue ?? "NULL / none", $0.extra, $0.comment]
         }, elapsed: .zero, message: "")
     }

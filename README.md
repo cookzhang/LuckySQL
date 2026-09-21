@@ -18,6 +18,11 @@ LuckySQL is a free, open-source, native macOS MySQL workbench built with Swift a
 - CSV/JSON export of the current result/page, TSV copying, favorites, and loaded-table search
 - SQL write confirmation, multi-result selection, preview row limits, and stop/disconnect
 - In-app GitHub release checks, SHA-256-verified downloads, confirmed installation with a retained backup, and restart
+- Background incremental SQL analysis, viewport-only coloring, indexed line numbers, stable completion suggestions with type/source hints
+- Independent per-tab undo/caret/scroll, dirty markers, rename/close/switch shortcuts, and remembered split/column layouts
+- **Command–P** finds tables across all visible databases, including collapsed schemas; recently visited tables appear first
+- **Command–Period** cancels the current SQL through a separate control connection without disconnecting; elapsed time and previous results remain visible
+- Production/staging/development badges, optional client-side read-only protection, and English / Simplified Chinese packaged UI (restart after changing language)
 - Clear driver/session boundary for future database engines
 
 ## Requirements
@@ -79,7 +84,7 @@ The integration test also verifies the 1,000-row server-side limit, smaller expl
 To create a distributable Apple Silicon app bundle locally:
 
 ```sh
-./scripts/package-release.sh 0.2.1
+./scripts/package-release.sh 0.3.0
 ```
 
 The archive and its SHA-256 checksum are written to `dist/`.
@@ -105,16 +110,33 @@ See the detailed [HeidiSQL comparison and acceptance checklist](Docs/HEIDISQL_PA
 
 - One active connection; multiple query tabs share it
 - Direct, non-TLS TCP only
-- SQL results retain at most 1,000 rows. SELECT/CTE/UNION previews add or cap the outer LIMIT, preserve smaller limits and offsets, and leave SQL drafts and write statements unchanged. SHOW/other non-SELECT results have a client-side cap; remaining packets are drained. Exports contain only retained rows/current page
+- SQL results retain at most 1,000 rows and 16 MiB of row payload per result. SELECT/CTE/UNION previews add or cap the outer LIMIT, preserve smaller limits and offsets, and leave SQL drafts and write statements unchanged. SHOW/other non-SELECT results have a client-side cap; remaining packets are drained. When a row would exceed the byte budget, that row and all following rows are omitted (never silently shortened). Exports contain only retained rows/current page; partial previews are labeled
+- Older query previews are released above a 64 MiB retained-payload workspace budget; drafts are never evicted. These are data-retention budgets, not hard process-RSS/network limits: protocol packets, strings, metadata, editor state and exports also consume memory. Large cells show a short grid prefix; opening a cell lays out its full retained value on demand
 - Completion uses the current database and referenced tables, loading metadata without requiring a table click; it is not a full SQL scope/type resolver (nested alias shadowing and CTE-derived columns remain unsupported)
 - No streaming full-database import/export or visual schema designer yet
-- Stop closes the connection, not a server-side KILL QUERY; writes already sent can still complete
+- Cancel Query uses `KILL QUERY` on a separate same-account connection, with a command barrier to avoid killing the next queued statement. The server may reject/delay cancellation; Stop & Disconnect remains a fallback. Neither option rolls back earlier statements or already committed writes
 - No transaction editing / concurrent-change detection; use a least-privilege account
 - Binary and generated columns are preview-only; tables with binary primary keys cannot be edited through the grid
 - No DELIMITER/routine scripts; at most 100 statements per batch, SQL files up to 2 MB
 - CSV uses display strings; JSON's columns + rows form distinguishes SQL NULL from the text "NULL"
 - Query history (100 entries) and drafts are local and may contain sensitive SQL values; history can be cleared in the UI
 - SQL statements entered by the user execute with the connected account's full privileges
+
+## Daily-work shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| ⌘T / ⌘W | New / close query tab (unsaved drafts require confirmation) |
+| ⇧⌘[ / ⇧⌘] | Previous / next query tab |
+| ⌘P | Find table across visible databases |
+| ⌘. | Cancel current SQL while retaining the connection |
+| ← / → in a result grid | Move the active cell column |
+| ⌘C / ⇧⌘C in a result grid | Copy cell / selected rows in displayed column order |
+| Return / Space in a result grid | Preview full cell value |
+
+Column metadata requests are coalesced and cached, and structure views reuse their last snapshot. Refresh explicitly reloads metadata; successful write statements invalidate caches. Refresh after external schema changes. Read-only protection is a conservative client guard, **not a database permission sandbox**; use a read-only server account for enforcement. Binary/generated columns and incomplete previews cannot be edited through the grid.
+
+The packaged application includes Chinese localization resources. `swift run` uses the unbundled executable and is intended for development; use the packaging script to verify localized UI.
 
 ## License
 

@@ -2,7 +2,7 @@
 
 Current implementation and acceptance status are tracked in [HEIDISQL_PARITY.md](HEIDISQL_PARITY.md). Multiple query tabs, selection/current execution, local history, basic formatting/completion, native grid, data paging/filtering, structure previews, and current-result exports have now landed. Items below describe broader targets; partial implementations are not full parity.
 
-## 0.1 — Harden the MySQL MVP
+## Next — Harden the MySQL workbench
 
 - TLS modes (`required`, CA verification, client certificates)
 - Connection test button, timeouts, reconnect, and clear diagnostics
@@ -13,7 +13,7 @@ Current implementation and acceptance status are tracked in [HEIDISQL_PARITY.md]
 - Unit tests with fake sessions plus MySQL/MariaDB integration tests in CI
 - Signed/notarized `.app`, Sparkle updates, and accessibility/VoiceOver pass
 
-## 0.2 — Daily database work
+## Further daily database work
 
 - SSH tunnels using system keys and Keychain-managed passphrases
 - CSV/JSON/SQL import and export with streaming progress
@@ -21,7 +21,7 @@ Current implementation and acceptance status are tracked in [HEIDISQL_PARITY.md]
 - Transaction mode, explain plans, server process list, and session variables
 - PostgreSQL adapter using the existing driver/session boundary
 
-## 0.3 — MCP and Agent
+## Future — MCP and Agent
 
 - Local MCP server that reuses configured connections without exposing passwords
 - Read-only-by-default tools for metadata, query, explain, and analysis

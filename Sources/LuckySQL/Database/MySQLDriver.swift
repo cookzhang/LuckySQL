@@ -31,7 +31,14 @@ final class MySQLDriver: DatabaseDriver, @unchecked Sendable {
                 _ = try await connection.textQuery("SET NAMES utf8mb4 COLLATE utf8mb4_general_ci")
                 let probe = try await connection.textQuery("SELECT 1")
                 guard probe.rows.count == 1 else { throw MySQLError.protocolError }
-                return MySQLSession(connection: connection)
+                let identity = try await connection.textQuery("SELECT CONNECTION_ID() AS id")
+                guard let connectionID = identity.rows.first?.column("id")?.uint64 else { throw MySQLError.protocolError }
+                let loop = group.next()
+                let queue = MySQLCommandQueue(connection: connection, connectionID: connectionID) {
+                    try await MySQLConnection.connect(to: address, username: profile.username, database: "", password: password,
+                        tlsConfiguration: nil, serverHostname: nil, logger: Logger(label: "LuckySQL.Cancel"), on: loop).get()
+                }
+                return MySQLSession(connection: connection, commands: queue)
             } catch {
                 try? await connection.close().get()
                 throw error
@@ -60,13 +67,14 @@ struct MySQLConnectionFailure: LocalizedError {
 
 final class MySQLSession: DatabaseSession, @unchecked Sendable {
     private let connection: MySQLConnection
-    init(connection: MySQLConnection) { self.connection = connection }
+    private let commands: MySQLCommandQueue
+    init(connection: MySQLConnection, commands: MySQLCommandQueue) { self.connection = connection; self.commands = commands }
 
     func query(_ sql: String) async throws -> QueryResult {
         let clock = ContinuousClock()
         let start = clock.now
         let previewSQL = try SQLPreview.query(sql)
-        let response = try await connection.textQuery(previewSQL, rowLimit: SQLPreview.rowLimit)
+        let response = try await commands.query(previewSQL, rowLimit: SQLPreview.rowLimit, byteLimit: 16 * 1024 * 1024)
         let rows = response.rows
         let columns = response.columns.map(\.name)
         var nullCells = Set<CellAddress>()
@@ -81,7 +89,9 @@ final class MySQLSession: DatabaseSession, @unchecked Sendable {
         }
         let elapsed = start.duration(to: clock.now)
         let message = columns.isEmpty ? "\(response.affectedRows) affected row(s)" : values.count == SQLPreview.rowLimit ? "\(values.count) row(s) · 1,000-row preview limit" : "\(values.count) row(s)"
-        return QueryResult(columns: columns, rows: values, elapsed: elapsed, message: message, nullCells: nullCells)
+        return QueryResult(columns: columns, rows: values, elapsed: elapsed,
+                           message: message + (response.byteLimitReached ? " · 16 MB preview budget reached; select fewer/smaller columns" : ""),
+                           nullCells: nullCells, isTruncated: response.byteLimitReached || values.count == SQLPreview.rowLimit, retainedBytes: response.retainedBytes)
     }
 
     func schemas() async throws -> [String] {
@@ -126,7 +136,7 @@ final class MySQLSession: DatabaseSession, @unchecked Sendable {
         WHERE `TABLE_SCHEMA` = \(schema) AND `TABLE_NAME` = \(name)
         ORDER BY `ORDINAL_POSITION`
         """
-        let rows = try await connection.textQuery(sql).rows
+        let rows = try await commands.query(sql).rows
         return rows.map { row in
             TableColumn(
                 name: Self.display(row.column("COLUMN_NAME")),
@@ -162,9 +172,10 @@ final class MySQLSession: DatabaseSession, @unchecked Sendable {
 
     func close() async { try? await connection.close().get() }
     func cancel() async { try? await connection.channel.close().get() }
+    func cancelQuery() async throws { try await commands.cancelQuery() }
 
     private func firstColumn(of sql: String) async throws -> [String] {
-        let rows = try await connection.textQuery(sql).rows
+        let rows = try await commands.query(sql).rows
         return rows.compactMap { row in
             guard let name = row.columnDefinitions.first?.name else { return nil }
             return Self.display(row.column(name))

@@ -29,6 +29,7 @@ mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 
 install -m 755 "$BINARY_PATH" "$APP_DIR/Contents/MacOS/$APP_NAME"
 install -m 644 "$REPO_ROOT/LICENSE" "$APP_DIR/Contents/Resources/LICENSE"
+ditto "$REPO_ROOT/Resources/zh-Hans.lproj" "$APP_DIR/Contents/Resources/zh-Hans.lproj"
 
 plutil -create xml1 "$INFO_PLIST"
 plutil -insert CFBundleDevelopmentRegion -string en "$INFO_PLIST"

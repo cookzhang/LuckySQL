@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
+    @AppStorage("appLanguage") private var language = "system"
 
     var body: some View {
         HStack(spacing: 0) {
@@ -38,6 +39,17 @@ struct SettingsView: View {
                         SecureField("Password", text: $model.password)
                         if model.isLoadingPassword { Text("Waiting for Keychain authorization…").font(.caption).foregroundStyle(.secondary) }
                         TextField("Default database", text: profile.database)
+                        Picker("Environment", selection: Binding(get: { profile.wrappedValue.environment ?? "Development" }, set: { profile.wrappedValue.environment = $0; model.saveProfiles() })) {
+                            Text("Development").tag("Development"); Text("Staging").tag("Staging"); Text("Production").tag("Production")
+                        }
+                        Toggle("Read-only protection", isOn: Binding(get: { profile.wrappedValue.readOnly ?? false }, set: { profile.wrappedValue.readOnly = $0; model.saveProfiles() }))
+                        Text("Client-side protection; use a read-only database account for security.").font(.caption).foregroundStyle(.secondary)
+                        Picker("Language / 语言", selection: $language) { Text("System / 跟随系统").tag("system"); Text("English").tag("en"); Text("简体中文").tag("zh-Hans") }
+                            .onChange(of: language) { _, value in
+                                if value == "system" { UserDefaults.standard.removeObject(forKey: "AppleLanguages") }
+                                else { UserDefaults.standard.set([value], forKey: "AppleLanguages") }
+                            }
+                        Text("Restart LuckySQL to apply the language.").font(.caption).foregroundStyle(.secondary)
                     }
                     HStack {
                         Spacer()
@@ -49,7 +61,7 @@ struct SettingsView: View {
             }
             .padding(20)
         }
-        .frame(width: 650, height: 360)
+        .frame(width: 700, height: 510)
         .disabled(model.isRunning)
     }
 

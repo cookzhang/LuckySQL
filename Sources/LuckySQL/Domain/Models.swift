@@ -1,31 +1,33 @@
 import Foundation
 
-struct ConnectionProfile: Identifiable, Codable, Hashable {
+struct ConnectionProfile: Identifiable, Codable, Hashable, Sendable {
     var id = UUID()
     var name = "Local MySQL"
     var host = "127.0.0.1"
     var port = 3306
     var username = "root"
     var database = ""
+    var environment: String?
+    var readOnly: Bool?
 
     static let local = ConnectionProfile()
 }
 
-struct DatabaseSchema: Identifiable, Hashable {
+struct DatabaseSchema: Identifiable, Hashable, Sendable {
     var id: String { name }
     let name: String
     var tables: [DatabaseTable] = []
     var tableLoadState: MetadataLoadState = .idle
 }
 
-enum MetadataLoadState: Hashable {
+enum MetadataLoadState: Hashable, Sendable {
     case idle
     case loading
     case loaded
     case failed(String)
 }
 
-struct DatabaseTable: Identifiable, Hashable {
+struct DatabaseTable: Identifiable, Hashable, Sendable, Codable {
     var id: String { "\(schema).\(name)" }
     let schema: String
     let name: String
@@ -43,12 +45,14 @@ struct TableColumn: Identifiable, Hashable, Sendable {
 }
 
 struct QueryResult: Sendable {
-    let id = UUID()
+    var id = UUID()
     let columns: [String]
     let rows: [[String]]
     let elapsed: Duration
     let message: String
     var nullCells: Set<CellAddress> = []
+    var isTruncated = false
+    var retainedBytes = 0
 
     func isNull(row: Int, column: Int) -> Bool { nullCells.contains(CellAddress(row: row, column: column)) }
 
@@ -104,9 +108,12 @@ struct QueryTab: Identifiable {
     var result = QueryResult.empty
     var results: [QueryResult] = []
     var fileURL: URL?
+    var savedSQL: String?
+    var lineCount = 1
+    var isDirty: Bool { savedSQL.map { $0 != sql } ?? !sql.isEmpty }
 }
 
-struct QueryHistoryEntry: Identifiable, Codable {
+struct QueryHistoryEntry: Identifiable, Codable, Sendable {
     var id = UUID()
     let date: Date
     let sql: String
@@ -116,6 +123,7 @@ struct QueryHistoryEntry: Identifiable, Codable {
 }
 
 struct TableStructure: Sendable {
+    var id = UUID()
     var columns: [TableColumn] = []
     var indexes = QueryResult.empty
     var foreignKeys = QueryResult.empty

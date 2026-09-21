@@ -1,7 +1,7 @@
 import Foundation
 
-enum SQLTokenKind { case keyword, string, identifier, number, comment, word, symbol, whitespace }
-struct SQLToken {
+enum SQLTokenKind: Sendable { case keyword, string, identifier, number, comment, word, symbol, whitespace }
+struct SQLToken: Sendable {
     let kind: SQLTokenKind
     let range: NSRange
     let text: String

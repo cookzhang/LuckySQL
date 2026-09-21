@@ -24,7 +24,22 @@ final class AppModel: ObservableObject {
     @Published var favorites: Set<String>
     @Published var showHistory = false
     @Published var isConnected = false
-    @Published var isRunning = false
+    @Published var isRunning = false {
+        didSet { if isRunning && !oldValue { busySince = Date() }; if !isRunning { busySince = nil; busyStage = "" } }
+    }
+    @Published var busySince: Date?
+    @Published var busyStage = ""
+    @Published var executingTabID: UUID?
+    @Published var isCancelling = false
+    @Published var showTableFinder = false
+    @Published var recentTables: [DatabaseTable] = []
+    @Published var renamingTab: UUID?
+    @Published var closingTab: UUID?
+    @Published var resultBudgetNote: String?
+    let editorSessions = EditorSessions()
+    private var cancelRequested = false
+    private var columnsTasks: [String: Task<[TableColumn], Error>] = [:]
+    private var structureCache: [String: TableStructure] = [:]
     @Published var errorMessage: String?
     @Published var connectedProfileID: UUID?
     @Published var connectingProfileID: UUID?
@@ -90,18 +105,23 @@ final class AppModel: ObservableObject {
         }
     }
     func loadCompletionMetadata() async {
-        guard isConnected else { return }
+        guard isConnected, !isRunning else { return }
         let epoch = connectionAttemptID
         let database = selectedDatabase
         if !database.isEmpty { await loadTables(in: database) }
-        let statement = SQLTools.executable(sql, selection: sqlSelection)
-        let references = SQLCompletion.references(statement, database: database)
+        let source = sql, selection = sqlSelection
+        let analysis = await Task.detached(priority: .utility) {
+            let statement = SQLTools.executable(source, selection: selection)
+            return (SQLCompletion.references(statement, database: database), SQLTools.tokens(statement))
+        }.value
+        guard !Task.isCancelled, epoch == connectionAttemptID, !isRunning else { return }
+        let references = analysis.0
         for name in Set(references.map { $0.table.schema }) {
             guard !Task.isCancelled, epoch == connectionAttemptID else { return }
             await loadTables(in: name)
         }
         // Also load a qualified schema as soon as the user types schema.
-        let tokens = SQLTools.tokens(statement)
+        let tokens = analysis.1
         for schema in schemas where tokens.contains(where: { $0.text == schema.name || $0.text == "`\(schema.name)`" }) {
             guard !Task.isCancelled, epoch == connectionAttemptID else { return }
             await loadTables(in: schema.name)
@@ -112,7 +132,7 @@ final class AppModel: ObservableObject {
             guard tableColumns[table.id] == nil, !completionFailures.contains(table.id),
                   schemas.contains(where: { $0.tables.contains(table) }) else { continue }
             do {
-                let columns = try await requireSession().columns(in: table)
+                let columns = try await cachedColumns(in: table)
                 if epoch == connectionAttemptID { tableColumns[table.id] = columns }
             } catch { if epoch == connectionAttemptID { completionFailures.insert(table.id) } }
         }
@@ -129,6 +149,16 @@ final class AppModel: ObservableObject {
         workspaceStore.saveTabs(queryTabs)
         workspaceStore.saveActiveIndex(activeTabIndex)
     }
+    func flushWorkspace() { saveWorkspace(); workspaceStore.flush() }
+    func renameTab(_ id: UUID, title: String) {
+        guard let index = queryTabs.firstIndex(where: { $0.id == id }), !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        queryTabs[index].title = String(title.prefix(80)); saveWorkspace()
+    }
+    func requestCloseTab(_ id: UUID) {
+        guard !isRunning, let tab = queryTabs.first(where: { $0.id == id }) else { return }
+        if tab.isDirty { closingTab = id } else { closeTab(id) }
+    }
+    func cycleTab(_ direction: Int) { selectTab(queryTabs[(activeTabIndex + direction + queryTabs.count) % queryTabs.count].id) }
     func newQuery(sql text: String = "", title: String? = nil) {
         saveWorkspace()
         let tab = QueryTab(title: title ?? "Query \(queryTabs.count + 1)", sql: text, database: selectedDatabase)
@@ -142,6 +172,7 @@ final class AppModel: ObservableObject {
     func closeTab(_ id: UUID) {
         guard !isRunning else { return }
         queryTabs.removeAll { $0.id == id }
+        editorSessions.remove(id)
         if queryTabs.isEmpty { queryTabs = [QueryTab(title: "Query 1", sql: "", database: selectedDatabase)] }
         if activeTabID == id { activeTabID = queryTabs[0].id; selectedDatabase = queryTabs[0].database }
         saveWorkspace()
@@ -189,6 +220,7 @@ final class AppModel: ObservableObject {
                 catch { await newSession.close(); throw error }
                 guard connectionAttemptID == attemptID else { await newSession.close(); return }
                 session = newSession; connectedProfileID = profile.id; connectingProfileID = nil; isConnected = true
+                recentTables = (try? JSONDecoder().decode([DatabaseTable].self, from: UserDefaults.standard.data(forKey: "recentTables.\(profile.id)") ?? Data())) ?? []
                 await loadSchemas()
             } catch {
                 guard connectionAttemptID == attemptID else { return }
@@ -208,6 +240,8 @@ final class AppModel: ObservableObject {
     }
     private func resetMetadata() {
         completionTask?.cancel(); completionFailures = []
+        columnsTasks = [:]; structureCache = [:]; recentTables = []
+        executingTabID = nil; cancelRequested = false; isCancelling = false
         schemas = []; tableColumns = [:]; selectedTable = nil
         browseResult = .empty; resultTable = nil; structure = TableStructure(); structureState = .idle
         for index in queryTabs.indices { queryTabs[index].result = .empty; queryTabs[index].results = [] }
@@ -219,6 +253,7 @@ final class AppModel: ObservableObject {
             let names = try await requireSession().schemas()
             guard epoch == connectionAttemptID else { return }
             schemas = names.map { DatabaseSchema(name: $0) }
+            tableColumns = [:]; structureCache = [:]; columnsTasks = [:]; completionFailures = []
             if !names.contains(selectedDatabase) {
                 let preferred = selectedProfile?.database ?? ""
                 let system = Set(["information_schema", "mysql", "performance_schema", "sys"])
@@ -231,6 +266,9 @@ final class AppModel: ObservableObject {
         guard let index = schemas.firstIndex(where: { $0.name == schema }) else { return }
         if !force, schemas[index].tableLoadState == .loaded || schemas[index].tableLoadState == .loading { return }
         let epoch = connectionAttemptID
+        if force {
+            for table in schemas[index].tables { tableColumns.removeValue(forKey: table.id); structureCache.removeValue(forKey: table.id); columnsTasks.removeValue(forKey: table.id) }
+        }
         schemas[index].tableLoadState = .loading
         do {
             let names = try await requireSession().tables(in: schema)
@@ -246,16 +284,36 @@ final class AppModel: ObservableObject {
         if !force, tableColumns[table.id] != nil { return }
         let epoch = connectionAttemptID
         do {
-            let columns = try await requireSession().columns(in: table)
+            let columns = try await cachedColumns(in: table, force: force)
             if epoch == connectionAttemptID { tableColumns[table.id] = columns }
         } catch { if epoch == connectionAttemptID { show(error) } }
     }
+    private func cachedColumns(in table: DatabaseTable, force: Bool = false) async throws -> [TableColumn] {
+        if !force, let value = tableColumns[table.id] { return value }
+        if let task = columnsTasks[table.id] { return try await task.value }
+        let session = try requireSession(), epoch = connectionAttemptID
+        let task = Task { try await session.columns(in: table) }
+        columnsTasks[table.id] = task
+        do {
+            let value = try await task.value
+            if epoch == connectionAttemptID { columnsTasks.removeValue(forKey: table.id); tableColumns[table.id] = value }
+            return value
+        } catch { if epoch == connectionAttemptID { columnsTasks.removeValue(forKey: table.id) }; throw error }
+    }
+    func loadAllTablesForSearch() async {
+        for name in schemas.map(\.name) {
+            guard !Task.isCancelled, isConnected, !isRunning else { return }
+            await loadTables(in: name)
+        }
+    }
     func browse(_ table: DatabaseTable) {
         guard !isRunning else { return }
-        if selectedTable != table { browseOptions = TableBrowseOptions(); structureState = .idle; structure = TableStructure() }
+        if selectedTable != table { browseOptions = TableBrowseOptions(); structureState = .idle; structure = TableStructure(); browseResult = .empty }
         selectedTable = table; section = .data; refreshData()
+        recentTables.removeAll { $0 == table }; recentTables.insert(table, at: 0); recentTables = Array(recentTables.prefix(15))
+        if let id = connectedProfileID, let data = try? JSONEncoder().encode(recentTables) { UserDefaults.standard.set(data, forKey: "recentTables.\(id)") }
     }
-    func refreshData(resetPage: Bool = false) {
+    func refreshData(resetPage: Bool = false, forceMetadata: Bool = false) {
         guard !isRunning, let table = selectedTable else { return }
         if resetPage { browseOptions.page = 0 }
         isRunning = true; errorMessage = nil; resultTable = nil
@@ -264,10 +322,13 @@ final class AppModel: ObservableObject {
             defer { if epoch == connectionAttemptID { isRunning = false } }
             do {
                 let session = try requireSession()
-                let columns = try await session.columns(in: table)
+                busyStage = NSLocalizedString("Loading table metadata", comment: "")
+                if forceMetadata { structureCache.removeValue(forKey: table.id) }
+                let columns = try await cachedColumns(in: table, force: forceMetadata)
                 guard epoch == connectionAttemptID, previewID == request else { return }
                 tableColumns[table.id] = columns
                 let query = try browseOptions.query(for: table, primaryKeys: columns.filter(\.isPrimaryKey).map(\.name))
+                busyStage = NSLocalizedString("Loading table data", comment: "")
                 let rows = try await session.query(query)
                 guard epoch == connectionAttemptID, previewID == request else { return }
                 lastBrowseSQL = query; resultTable = table; acceptBrowseResult(rows)
@@ -277,8 +338,9 @@ final class AppModel: ObservableObject {
     private func acceptBrowseResult(_ rows: QueryResult) {
         hasNextPage = rows.rows.count > browseOptions.pageSize
         browseResult = QueryResult(columns: rows.columns, rows: Array(rows.rows.prefix(browseOptions.pageSize)), elapsed: rows.elapsed,
-                                   message: "\(min(rows.rows.count, browseOptions.pageSize)) row(s)",
-                                   nullCells: Set(rows.nullCells.filter { $0.row < browseOptions.pageSize }))
+                                   message: rows.isTruncated ? rows.message : "\(min(rows.rows.count, browseOptions.pageSize)) row(s)",
+                                   nullCells: Set(rows.nullCells.filter { $0.row < browseOptions.pageSize }), isTruncated: rows.isTruncated, retainedBytes: rows.retainedBytes)
+        trimResultMemory(preserving: browseResult.id)
     }
     func nextPage(_ delta: Int) {
         guard !isRunning, (delta < 0 ? browseOptions.page > 0 : hasNextPage) else { return }
@@ -290,12 +352,13 @@ final class AppModel: ObservableObject {
         else { browseOptions.sortColumn = column; browseOptions.descending = false }
         refreshData(resetPage: true)
     }
-    func showStructure(_ table: DatabaseTable? = nil) {
+    func showStructure(_ table: DatabaseTable? = nil, force: Bool = false) {
         guard !isRunning else { return }
         if let table, table != selectedTable {
             selectedTable = table; browseOptions = TableBrowseOptions(); browseResult = .empty; resultTable = nil
         }
         guard let table = selectedTable else { return }
+        if !force, let cached = structureCache[table.id] { structure = cached; structureState = .loaded; section = .structure; return }
         section = .structure; structureState = .loading; isRunning = true
         let epoch = connectionAttemptID
         Task {
@@ -303,7 +366,8 @@ final class AppModel: ObservableObject {
             do {
                 let details = try await requireSession().structure(in: table)
                 guard epoch == connectionAttemptID else { return }
-                structure = details; tableColumns[table.id] = details.columns; structureState = .loaded
+                if structureCache.count >= 32 { structureCache.removeAll() }
+                structure = details; structureCache[table.id] = details; tableColumns[table.id] = details.columns; structureState = .loaded
             } catch { if epoch == connectionAttemptID { structureState = .failed(error.localizedDescription); show(error) } }
         }
     }
@@ -316,43 +380,97 @@ final class AppModel: ObservableObject {
     func runCurrentQuery(all: Bool = false) {
         guard isConnected, !isRunning else { return }
         section = .query; saveWorkspace()
-        let statement = SQLTools.executable(sql, selection: sqlSelection, all: all)
-        guard !SQLTools.statements(statement).isEmpty else { return }
-        guard SQLTools.statements(statement).count <= 100 else { errorMessage = "Run at most 100 statements per batch. Use a streaming import tool for larger scripts."; return }
-        if SQLTools.tokens(statement).contains(where: { $0.kind == .word && $0.text.uppercased() == "DELIMITER" }) {
-            errorMessage = "DELIMITER scripts are not supported yet. Use a dedicated MySQL client for routine scripts."; return
+        let source = sql, selection = sqlSelection, database = selectedDatabase, tab = activeTabID, epoch = connectionAttemptID
+        if source.utf16.count > 32_768 {
+            isRunning = true; busyStage = NSLocalizedString("Analyzing SQL", comment: "")
+            Task {
+                let plan = await Task.detached(priority: .userInitiated) { SQLExecutionPlan.prepare(source, selection: selection, all: all) }.value
+                guard epoch == connectionAttemptID else { return }
+                isRunning = false; submit(plan, database: database, tab: tab)
+            }
+        } else { submit(SQLExecutionPlan.prepare(source, selection: selection, all: all), database: database, tab: tab) }
+    }
+    private func submit(_ plan: SQLExecutionPlan, database: String, tab: UUID) {
+        if let error = plan.error { errorMessage = error; return }
+        guard !plan.sql.isEmpty else { return }
+        let request = (plan.sql, database, tab)
+        if isReadOnly && plan.confirmation {
+            errorMessage = "Read-only protection blocks statements that can change data or server state. Use a server-side read-only account for a security boundary."; return
         }
-        let request = (statement, selectedDatabase, activeTabID)
-        if SQLTools.requiresConfirmation(statement) { pendingExecution = request; pendingSQL = statement }
+        if plan.confirmation { pendingExecution = request; pendingSQL = plan.sql }
         else { execute(request) }
     }
     func confirmExecution() {
         guard let request = pendingExecution else { return }
+        guard !isReadOnly else { cancelExecution(); errorMessage = "Read-only protection is enabled."; return }
         pendingSQL = nil; pendingExecution = nil; execute(request)
     }
     func cancelExecution() { pendingSQL = nil; pendingExecution = nil }
+    var isReadOnly: Bool { profiles.first(where: { $0.id == connectedProfileID })?.readOnly == true }
+    var isProduction: Bool { profiles.first(where: { $0.id == connectedProfileID })?.environment == "Production" }
+    var connectionLabel: String {
+        guard let profile = profiles.first(where: { $0.id == connectedProfileID }) else { return "" }
+        return "\(NSLocalizedString(profile.environment ?? "Development", comment: "")) · \(profile.name) · \(profile.host):\(profile.port)" + (isReadOnly ? " · " + NSLocalizedString("READ ONLY", comment: "") : "")
+    }
+    func cancelCurrentQuery() {
+        guard executingTabID != nil, !isCancelling, let session else { return }
+        cancelRequested = true; isCancelling = true; busyStage = NSLocalizedString("Cancelling current query", comment: "")
+        let epoch = connectionAttemptID
+        Task {
+            do { try await session.cancelQuery() }
+            catch { if epoch == connectionAttemptID { show(error) } }
+            if epoch == connectionAttemptID { isCancelling = false }
+        }
+    }
     private func execute(_ request: (sql: String, database: String, tabID: UUID)) {
         guard !isRunning, isConnected else { return }
         isRunning = true; errorMessage = nil
+        cancelRequested = false; executingTabID = request.tabID; busyStage = NSLocalizedString("Preparing query", comment: "")
         let epoch = connectionAttemptID
         let connectionName = profiles.first { $0.id == connectedProfileID }?.name ?? ""
-        if let index = queryTabs.firstIndex(where: { $0.id == request.tabID }) { queryTabs[index].results = []; queryTabs[index].result = .empty }
         Task {
-            defer { if epoch == connectionAttemptID { isRunning = false } }
+            defer {
+                if epoch == connectionAttemptID {
+                    if cancelRequested { record(request.sql, database: request.database, connection: connectionName, outcome: "Cancellation requested · batch stopped; committed writes are not rolled back") }
+                    isRunning = false; executingTabID = nil
+                }
+            }
             do {
                 let session = try requireSession()
                 if !request.database.isEmpty { _ = try await session.query("USE \(try SQLIdentifier.quote(request.database));") }
-                for statement in SQLTools.statements(request.sql) {
-                    guard epoch == connectionAttemptID else { return }
+                let statements = await Task.detached { SQLTools.statements(request.sql).map { (sql: $0.sql, writes: SQLTools.requiresConfirmation($0.sql)) } }.value
+                var receivedResult = false
+                for (number, statement) in statements.enumerated() {
+                    guard epoch == connectionAttemptID, !cancelRequested else { return }
+                    busyStage = String(format: NSLocalizedString("Executing statement %ld/%ld · previous result retained until ready", comment: ""), number + 1, statements.count)
                     let result = try await session.query(statement.sql.trimmingCharacters(in: .whitespacesAndNewlines))
-                    guard epoch == connectionAttemptID, let index = queryTabs.firstIndex(where: { $0.id == request.tabID }) else { return }
+                    guard epoch == connectionAttemptID, !cancelRequested, let index = queryTabs.firstIndex(where: { $0.id == request.tabID }) else { return }
+                    if !receivedResult { queryTabs[index].results = []; receivedResult = true }
                     queryTabs[index].results.append(result); queryTabs[index].result = result
+                    trimResultMemory(preserving: result.id)
+                    if statement.writes { tableColumns = [:]; structureCache = [:]; completionFailures = [] }
                     record(statement.sql, database: request.database, connection: connectionName, outcome: result.message)
                 }
             } catch {
                 if epoch == connectionAttemptID {
-                    record(request.sql, database: request.database, connection: connectionName, outcome: "Error: \(error.localizedDescription)"); show(error)
+                    if !cancelRequested { record(request.sql, database: request.database, connection: connectionName, outcome: "Error: \(error.localizedDescription)"); show(error) }
                 }
+            }
+        }
+    }
+    func trimResultMemory(preserving id: UUID) {
+        var unique: [UUID: Int] = [browseResult.id: browseResult.retainedBytes]
+        for tab in queryTabs { for result in tab.results + [tab.result] { unique[result.id] = result.retainedBytes } }
+        var bytes = unique.values.reduce(0, +)
+        guard bytes > 64 * 1024 * 1024 else { return }
+        for index in queryTabs.indices {
+            for old in queryTabs[index].results + [queryTabs[index].result] where old.id != id {
+                guard bytes > 64 * 1024 * 1024 else { return }
+                guard let size = unique.removeValue(forKey: old.id) else { continue }
+                bytes -= size
+                queryTabs[index].results.removeAll { $0.id == old.id }
+                if queryTabs[index].result.id == old.id { queryTabs[index].result = queryTabs[index].results.last ?? .empty }
+                resultBudgetNote = "Older result previews were released to keep the workspace within its 64 MB data budget. SQL drafts are unchanged."
             }
         }
     }
@@ -411,7 +529,7 @@ final class AppModel: ObservableObject {
         }
     }
     var canMutateSelectedTable: Bool {
-        guard section == .data, let table = resultTable, table == selectedTable else { return false }
+        guard !isReadOnly, !browseResult.isTruncated, section == .data, let table = resultTable, table == selectedTable else { return false }
         let keys = tableColumns[table.id]?.filter(\.isPrimaryKey) ?? []
         return !keys.isEmpty && keys.allSatisfy { browseResult.columns.contains($0.name) && !isBinary($0.dataType) }
     }
@@ -449,27 +567,60 @@ final class AppModel: ObservableObject {
     }
     private func show(_ error: Error) { errorMessage = error.localizedDescription }
     func copy(_ value: String) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(value, forType: .string) }
+    func copyResult(separator: String) {
+        let snapshot = result
+        Task {
+            let text = await Task.detached(priority: .userInitiated) { ResultExport.csv(snapshot, separator: separator) }.value
+            copy(text)
+        }
+    }
+    func formatSQL() {
+        let source = sql, id = activeTabID
+        Task {
+            let formatted = await Task.detached(priority: .userInitiated) { SQLTools.format(source) }.value
+            guard let index = queryTabs.firstIndex(where: { $0.id == id }), queryTabs[index].sql == source else { return }
+            queryTabs[index].sql = formatted; saveWorkspace()
+        }
+    }
     func openSQLFile() {
         let panel = NSOpenPanel(); panel.allowedContentTypes = [.plainText, UTType(filenameExtension: "sql") ?? .plainText]
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-            guard size <= 2_000_000 else { errorMessage = "SQL files above 2 MB require a streaming import tool."; return }
-            newQuery(sql: try String(contentsOf: url, encoding: .utf8), title: url.lastPathComponent)
-            queryTabs[activeTabIndex].fileURL = url
-        } catch { show(error) }
+        Task {
+            do {
+                let text = try await Task.detached(priority: .userInitiated) {
+                    let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                    guard size <= 2_000_000 else { throw SQLFileTooLarge() }
+                    return try String(contentsOf: url, encoding: .utf8)
+                }.value
+                newQuery(sql: text, title: url.lastPathComponent)
+                queryTabs[activeTabIndex].fileURL = url; queryTabs[activeTabIndex].savedSQL = text
+            } catch { show(error) }
+        }
     }
     func saveSQLFile() {
         let panel = NSSavePanel(); panel.nameFieldStringValue = queryTabs[activeTabIndex].fileURL?.lastPathComponent ?? "query.sql"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        do { try sql.write(to: url, atomically: true, encoding: .utf8); queryTabs[activeTabIndex].fileURL = url; queryTabs[activeTabIndex].title = url.lastPathComponent; saveWorkspace() }
-        catch { show(error) }
+        let source = sql, id = activeTabID
+        Task {
+            do {
+                try await Task.detached(priority: .utility) { try source.write(to: url, atomically: true, encoding: .utf8) }.value
+                if let index = queryTabs.firstIndex(where: { $0.id == id }) {
+                    queryTabs[index].fileURL = url; queryTabs[index].title = url.lastPathComponent; queryTabs[index].savedSQL = source; saveWorkspace()
+                }
+            } catch { show(error) }
+        }
     }
     func exportResult(json: Bool) {
         let value = result
         let panel = NSSavePanel(); panel.nameFieldStringValue = "\(section == .data ? selectedTable?.name ?? "data" : "result").\(json ? "json" : "csv")"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        do { try (json ? ResultExport.json(value) : ResultExport.csv(value)).write(to: url, atomically: true, encoding: .utf8) }
-        catch { show(error) }
+        Task {
+            do { try await Task.detached(priority: .utility) { try (json ? ResultExport.json(value) : ResultExport.csv(value)).write(to: url, atomically: true, encoding: .utf8) }.value }
+            catch { show(error) }
+        }
     }
+}
+
+private struct SQLFileTooLarge: LocalizedError {
+    var errorDescription: String? { "SQL files above 2 MB require a streaming import tool." }
 }
