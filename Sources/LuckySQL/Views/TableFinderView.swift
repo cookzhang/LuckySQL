@@ -1,5 +1,23 @@
 import SwiftUI
 
+@MainActor enum WorkspaceWindows {
+    static let windows = NSHashTable<NSWindow>.weakObjects()
+    static func closesQueryTab(in window: NSWindow, section: WorkspaceSection) -> Bool {
+        windows.contains(window) && section == .query
+    }
+}
+
+struct WorkspaceWindowMarker: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { Marker() }
+    func updateNSView(_ view: NSView, context: Context) {}
+    private final class Marker: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let window { WorkspaceWindows.windows.add(window) }
+        }
+    }
+}
+
 struct TableFinderView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss

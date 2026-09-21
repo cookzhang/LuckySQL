@@ -32,7 +32,11 @@ struct LuckySQLApp: App {
                 Button("Find Table") { model.showTableFinder = true }.keyboardShortcut("p", modifiers: .command).disabled(!model.isConnected || model.isRunning)
                 Button("Next Query Tab") { model.cycleTab(1) }.keyboardShortcut("]", modifiers: [.command, .shift])
                 Button("Previous Query Tab") { model.cycleTab(-1) }.keyboardShortcut("[", modifiers: [.command, .shift])
-                Button("Close Query Tab") { model.requestCloseTab(model.activeTabID) }.keyboardShortcut("w", modifiers: .command).disabled(model.isRunning)
+                Button("Close") {
+                    guard let window = NSApplication.shared.keyWindow else { return }
+                    if WorkspaceWindows.closesQueryTab(in: window, section: model.section) { model.requestCloseTab(model.activeTabID) }
+                    else { window.performClose(nil) }
+                }.keyboardShortcut("w", modifiers: .command)
                 Button("Cancel Query") { model.cancelCurrentQuery() }.keyboardShortcut(".", modifiers: .command).disabled(model.executingTabID == nil || model.isCancelling)
             }
         }

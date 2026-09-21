@@ -4,6 +4,14 @@ import XCTest
 @testable import LuckySQL
 
 final class ExperienceTests: XCTestCase {
+    @MainActor func testCloseShortcutOnlyTargetsQueryTabsInWorkspaceWindows() {
+        let workspace = NSWindow(), settings = NSWindow()
+        WorkspaceWindows.windows.add(workspace)
+        defer { WorkspaceWindows.windows.remove(workspace) }
+        XCTAssertTrue(WorkspaceWindows.closesQueryTab(in: workspace, section: .query))
+        XCTAssertFalse(WorkspaceWindows.closesQueryTab(in: workspace, section: .data))
+        XCTAssertFalse(WorkspaceWindows.closesQueryTab(in: settings, section: .query))
+    }
     func testLargeDocumentIncrementalAnalysis() async {
         let source = String(repeating: "SELECT id, full_name FROM demo_customers WHERE id = 1;\n", count: 38_462)
         let clock = ContinuousClock(), baselineStart = clock.now

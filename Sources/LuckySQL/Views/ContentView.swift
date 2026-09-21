@@ -47,6 +47,7 @@ struct ContentView: View {
                 }.font(.caption).padding(.horizontal, 12).frame(height: 28).background(.bar)
             }
         }
+        .background(WorkspaceWindowMarker())
         .toolbar {
             ToolbarItemGroup {
                 if model.isConnected { Button("Disconnect", systemImage: "bolt.slash") { model.disconnect() }.disabled(model.isRunning) }
