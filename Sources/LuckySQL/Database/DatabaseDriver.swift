@@ -25,4 +25,9 @@ struct QueryCancellationUnavailable: LocalizedError {
 
 protocol DatabaseDriver: Sendable {
     func connect(profile: ConnectionProfile, password: String) async throws -> any DatabaseSession
+    func connectPreview(profile: ConnectionProfile, password: String) async throws -> (any DatabaseSession)?
+}
+
+extension DatabaseDriver {
+    func connectPreview(profile: ConnectionProfile, password: String) async throws -> (any DatabaseSession)? { nil }
 }

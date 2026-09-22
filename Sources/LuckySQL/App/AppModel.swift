@@ -8,6 +8,9 @@ final class AppModel: ObservableObject {
     @Published var selectedProfileID: UUID?
     @Published var password = ""
     @Published var isLoadingPassword = false
+    @Published var passwordNotice: String?
+    @Published var connectionDraft: ConnectionDraft?
+    private var sessionPasswords: [UUID: String] = [:]
     @Published var schemas: [DatabaseSchema] = []
     @Published var selectedTable: DatabaseTable?
     @Published var selectedDatabase = ""
@@ -59,6 +62,12 @@ final class AppModel: ObservableObject {
     private var passwordLoadTask: Task<Void, Never>?
     private var completionTask: Task<Void, Never>?
     private var completionFailures = Set<String>()
+    private var browsePages = BrowsePageCache()
+    private var prefetchTask: Task<Void, Never>?
+    private var prefetchSession: (any DatabaseSession)?
+    private var prefetchGeneration = UUID()
+    private var allowsBrowsePrefetch = true
+    private var previewCredentials: (profile: ConnectionProfile, password: String)?
 
     init(profileStore: ProfileStore? = nil, keychain: PasswordStoring = KeychainStore(), driver: any DatabaseDriver = MySQLDriver(), workspaceStore: WorkspaceStore? = nil) {
         let profileStore = profileStore ?? ProfileStore()
@@ -78,7 +87,7 @@ final class AppModel: ObservableObject {
     var sql: String {
         get { queryTabs[activeTabIndex].sql }
         set {
-            queryTabs[activeTabIndex].sql = newValue
+            queryTabs[activeTabIndex].document.sql = newValue
             scheduleCompletionMetadata()
             draftSaveTask?.cancel()
             draftSaveTask = Task { [weak self] in
@@ -90,7 +99,7 @@ final class AppModel: ObservableObject {
     }
     var sqlSelection: NSRange {
         get { queryTabs[activeTabIndex].selection }
-        set { queryTabs[activeTabIndex].selection = newValue }
+        set { queryTabs[activeTabIndex].document.selection = newValue }
     }
     var result: QueryResult { section == .query ? queryTabs[activeTabIndex].result : browseResult }
     var completionCatalog: SQLCompletionCatalog {
@@ -117,17 +126,17 @@ final class AppModel: ObservableObject {
         guard !Task.isCancelled, epoch == connectionAttemptID, !isRunning else { return }
         let references = analysis.0
         for name in Set(references.map { $0.table.schema }) {
-            guard !Task.isCancelled, epoch == connectionAttemptID else { return }
+            guard !Task.isCancelled, epoch == connectionAttemptID, !isRunning else { return }
             await loadTables(in: name)
         }
         // Also load a qualified schema as soon as the user types schema.
         let tokens = analysis.1
         for schema in schemas where tokens.contains(where: { $0.text == schema.name || $0.text == "`\(schema.name)`" }) {
-            guard !Task.isCancelled, epoch == connectionAttemptID else { return }
+            guard !Task.isCancelled, epoch == connectionAttemptID, !isRunning else { return }
             await loadTables(in: schema.name)
         }
         for reference in references {
-            guard !Task.isCancelled, epoch == connectionAttemptID else { return }
+            guard !Task.isCancelled, epoch == connectionAttemptID, !isRunning else { return }
             let table = reference.table
             guard tableColumns[table.id] == nil, !completionFailures.contains(table.id),
                   schemas.contains(where: { $0.tables.contains(table) }) else { continue }
@@ -145,7 +154,7 @@ final class AppModel: ObservableObject {
         }
     }
     func saveWorkspace() {
-        queryTabs[activeTabIndex].database = selectedDatabase
+        if queryTabs[activeTabIndex].database != selectedDatabase { queryTabs[activeTabIndex].database = selectedDatabase }
         workspaceStore.saveTabs(queryTabs)
         workspaceStore.saveActiveIndex(activeTabIndex)
     }
@@ -185,20 +194,73 @@ final class AppModel: ObservableObject {
     func isFavorite(_ table: DatabaseTable) -> Bool { favorites.contains(favoriteKey(table)) }
     private func favoriteKey(_ table: DatabaseTable) -> String { "\(connectedProfileID?.uuidString ?? "")/\(table.id)" }
     func clearHistory() { history = []; workspaceStore.saveHistory([]) }
-    func addProfile() {
-        let profile = ConnectionProfile(name: "New Connection")
-        profiles.append(profile); selectedProfileID = profile.id; loadPassword(); saveProfiles()
+    func beginNewConnection() {
+        guard !isRunning else { return }
+        connectionDraft = ConnectionDraft(profile: ConnectionProfile(name: ""), isNew: true)
+    }
+    func beginEditConnection(_ id: UUID) {
+        guard !isRunning, let profile = profiles.first(where: { $0.id == id }) else { return }
+        let cached = id == selectedProfileID && !isLoadingPassword ? password : sessionPasswords[id]
+        let draft = ConnectionDraft(profile: profile, isNew: false, password: cached ?? "")
+        connectionDraft = draft
+        if let cached, !cached.isEmpty { return }
+        draft.isLoadingPassword = true
+        let revision = draft.passwordRevision
+        Task { [weak self, weak draft, keychain] in
+            let saved: String?
+            do { saved = try await keychain.password(for: id) }
+            catch { saved = nil }
+            guard let self, let draft, self.connectionDraft?.id == draft.id else { return }
+            if draft.passwordRevision == revision { draft.password = saved ?? cached ?? "" }
+            if saved == nil { draft.notice = NSLocalizedString("Enter your password to connect. It is never stored as plain text.", comment: "") }
+            draft.isLoadingPassword = false
+        }
+    }
+    func cancelConnectionEditor() {
+        guard !isRunning else { return }
+        connectionDraft = nil
+    }
+    func submitConnection(_ draft: ConnectionDraft) {
+        guard !isRunning, connectionDraft?.id == draft.id else { return }
+        do {
+            let profile = try draft.validatedProfile()
+            if let index = profiles.firstIndex(where: { $0.id == profile.id }) { profiles[index] = profile }
+            else { profiles.append(profile) }
+            passwordLoadTask?.cancel(); passwordLoadTask = nil; isLoadingPassword = false
+            selectedProfileID = profile.id; password = draft.password; passwordNotice = nil
+            draft.error = nil; saveProfiles(); connect()
+        } catch { draft.error = error.localizedDescription }
+    }
+    /// UI entry point: missing credentials lead directly to the small editor.
+    func requestConnect(to id: UUID? = nil) {
+        guard !isRunning else { return }
+        guard let id = id ?? selectedProfileID else { beginNewConnection(); return }
+        selectProfile(id)
+        Task {
+            await passwordLoadTask?.value
+            guard selectedProfileID == id, !isRunning, connectionDraft == nil else { return }
+            if password.isEmpty { beginEditConnection(id) }
+            else { connect(to: id) }
+        }
+    }
+    func deleteProfile(_ id: UUID) {
+        guard !isRunning, profiles.contains(where: { $0.id == id }) else { return }
+        selectedProfileID = id; deleteSelectedProfile()
     }
     func deleteSelectedProfile() {
         guard let id = selectedProfileID else { return }
+        sessionPasswords.removeValue(forKey: id)
         if connectedProfileID == id || connectingProfileID == id { disconnect() }
         Task { try? await keychain.deletePassword(for: id) }
         profiles.removeAll { $0.id == id }
-        if profiles.isEmpty { profiles = [.local] }
         selectedProfileID = profiles.first?.id; saveProfiles(); loadPassword()
     }
     func saveProfiles() { profileStore.save(profiles) }
-    func selectProfile(_ id: UUID?) { selectedProfileID = id; loadPassword() }
+    func selectProfile(_ id: UUID?) {
+        guard selectedProfileID != id else { return }
+        if let old = selectedProfileID, !isLoadingPassword { sessionPasswords[old] = password }
+        selectedProfileID = id; loadPassword()
+    }
     func connect(to profileID: UUID? = nil) {
         guard !isRunning else { return }
         if let profileID { selectProfile(profileID) }
@@ -216,10 +278,18 @@ final class AppModel: ObservableObject {
                 await previousSession?.close()
                 let newSession = try await driver.connect(profile: profile, password: password)
                 guard connectionAttemptID == attemptID else { await newSession.close(); return }
-                do { try await keychain.save(password, for: profile.id) }
-                catch { await newSession.close(); throw error }
+                sessionPasswords[profile.id] = password
+                do {
+                    try await keychain.save(password, for: profile.id)
+                    if selectedProfileID == profile.id { passwordNotice = nil }
+                } catch {
+                    if selectedProfileID == profile.id {
+                        passwordNotice = NSLocalizedString("Password kept for this session only; secure storage is unavailable. No authorization dialog will be shown.", comment: "")
+                    }
+                }
                 guard connectionAttemptID == attemptID else { await newSession.close(); return }
                 session = newSession; connectedProfileID = profile.id; connectingProfileID = nil; isConnected = true
+                previewCredentials = (profile, password)
                 recentTables = (try? JSONDecoder().decode([DatabaseTable].self, from: UserDefaults.standard.data(forKey: "recentTables.\(profile.id)") ?? Data())) ?? []
                 await loadSchemas()
             } catch {
@@ -227,7 +297,13 @@ final class AppModel: ObservableObject {
                 connectingProfileID = nil; connectedProfileID = nil
                 schemaLoadState = .failed(error.localizedDescription); show(error)
             }
-            if connectionAttemptID == attemptID { isRunning = false }
+            if connectionAttemptID == attemptID {
+                isRunning = false
+                if let draft = connectionDraft, draft.profile.id == profile.id {
+                    if isConnected { connectionDraft = nil }
+                    else { draft.error = errorMessage; errorMessage = nil }
+                }
+            }
         }
     }
     func disconnect() {
@@ -239,6 +315,8 @@ final class AppModel: ObservableObject {
         Task { if wasRunning { await old?.cancel() } else { await old?.close() } }
     }
     private func resetMetadata() {
+        previewCredentials = nil
+        invalidateBrowsePages(); allowsBrowsePrefetch = true
         completionTask?.cancel(); completionFailures = []
         columnsTasks = [:]; structureCache = [:]; recentTables = []
         executingTabID = nil; cancelRequested = false; isCancelling = false
@@ -247,6 +325,7 @@ final class AppModel: ObservableObject {
         for index in queryTabs.indices { queryTabs[index].result = .empty; queryTabs[index].results = [] }
     }
     func loadSchemas() async {
+        invalidateBrowsePages()
         let epoch = connectionAttemptID
         schemaLoadState = .loading
         do {
@@ -309,13 +388,22 @@ final class AppModel: ObservableObject {
     func browse(_ table: DatabaseTable) {
         guard !isRunning else { return }
         if selectedTable != table { browseOptions = TableBrowseOptions(); structureState = .idle; structure = TableStructure(); browseResult = .empty }
-        selectedTable = table; section = .data; refreshData()
+        selectedTable = table; section = .data; refreshData(useCache: true)
         recentTables.removeAll { $0 == table }; recentTables.insert(table, at: 0); recentTables = Array(recentTables.prefix(15))
         if let id = connectedProfileID, let data = try? JSONEncoder().encode(recentTables) { UserDefaults.standard.set(data, forKey: "recentTables.\(id)") }
     }
-    func refreshData(resetPage: Bool = false, forceMetadata: Bool = false) {
+    func refreshData(resetPage: Bool = false, forceMetadata: Bool = false, useCache: Bool = false) {
         guard !isRunning, let table = selectedTable else { return }
         if resetPage { browseOptions.page = 0 }
+        stopPrefetch()
+        if !useCache || forceMetadata { browsePages.removeAll() }
+        let options = browseOptions, key = BrowsePageKey(table: table, options: browseOptions)
+        if useCache, let cached = browsePages.value(for: key) {
+            errorMessage = nil; lastBrowseSQL = cached.sql; resultTable = table
+            acceptBrowseResult(cached.result)
+            schedulePrefetch(for: key, rows: cached.result)
+            return
+        }
         isRunning = true; errorMessage = nil; resultTable = nil
         let epoch = connectionAttemptID; let request = UUID(); previewID = request
         Task {
@@ -327,12 +415,66 @@ final class AppModel: ObservableObject {
                 let columns = try await cachedColumns(in: table, force: forceMetadata)
                 guard epoch == connectionAttemptID, previewID == request else { return }
                 tableColumns[table.id] = columns
-                let query = try browseOptions.query(for: table, primaryKeys: columns.filter(\.isPrimaryKey).map(\.name))
+                let query = try browseQuery(for: key, columns: columns)
                 busyStage = NSLocalizedString("Loading table data", comment: "")
                 let rows = try await session.query(query)
-                guard epoch == connectionAttemptID, previewID == request else { return }
+                guard epoch == connectionAttemptID, previewID == request, browseOptions == options else { return }
+                browsePages.insert(rows, sql: query, for: key)
                 lastBrowseSQL = query; resultTable = table; acceptBrowseResult(rows)
+                schedulePrefetch(for: key, rows: rows)
             } catch { if epoch == connectionAttemptID { show(error) } }
+        }
+    }
+    private func browseQuery(for key: BrowsePageKey, columns: [TableColumn]) throws -> String {
+        let keys = columns.filter(\.isPrimaryKey)
+        var cursor: String?
+        if key.options.page > 0, keys.count == 1,
+           ["tinyint", "smallint", "mediumint", "int", "bigint"].contains(where: { keys[0].dataType.lowercased().hasPrefix($0) }),
+           key.options.sortColumn.isEmpty || key.options.sortColumn == keys[0].name {
+            var previous = key; previous.options.page -= 1
+            if let page = browsePages.value(for: previous), page.result.rows.count >= key.options.pageSize,
+               let column = page.result.columns.firstIndex(of: keys[0].name),
+               !page.result.isNull(row: key.options.pageSize - 1, column: column) {
+                cursor = page.result.rows[key.options.pageSize - 1][column]
+            }
+        }
+        return try key.options.query(for: key.table, primaryKeys: keys.map(\.name), afterPrimaryKey: cursor)
+    }
+    private func stopPrefetch() {
+        prefetchGeneration = UUID(); prefetchTask?.cancel(); prefetchTask = nil
+        let old = prefetchSession; prefetchSession = nil
+        if let old { Task { await old.cancel() } }
+    }
+    private func invalidateBrowsePages() { stopPrefetch(); browsePages.removeAll() }
+    private func schedulePrefetch(for key: BrowsePageKey, rows: QueryResult) {
+        guard allowsBrowsePrefetch, !rows.isTruncated, rows.rows.count > key.options.pageSize,
+              let columns = tableColumns[key.table.id], columns.contains(where: \.isPrimaryKey),
+              let credentials = previewCredentials else { return }
+        // Use the actual connection endpoint/secret, not a profile being edited.
+        let profile = credentials.profile, secret = credentials.password
+        var next = key; next.options.page += 1
+        guard browsePages.value(for: next) == nil, let query = try? browseQuery(for: next, columns: columns) else { return }
+        let epoch = connectionAttemptID, generation = prefetchGeneration
+        prefetchTask = Task { [weak self, driver] in
+            do {
+                // Do not compete with a fast sequence of clicks or table changes.
+                try await Task.sleep(for: .milliseconds(180))
+                guard let self, !Task.isCancelled, epoch == self.connectionAttemptID, generation == self.prefetchGeneration,
+                      self.section == .data, !self.isRunning else { return }
+                guard let reader = try await driver.connectPreview(profile: profile, password: secret) else { return }
+                guard !Task.isCancelled, epoch == self.connectionAttemptID, generation == self.prefetchGeneration else { await reader.close(); return }
+                // A driver must never lend the transaction/session connection to prefetch.
+                guard reader !== self.session else { return }
+                self.prefetchSession = reader
+                do {
+                    let result = try await reader.query(query)
+                    if !Task.isCancelled, epoch == self.connectionAttemptID, generation == self.prefetchGeneration {
+                        self.browsePages.insert(result, sql: query, for: next)
+                    }
+                } catch { /* Speculation must never present a database error dialog. */ }
+                if generation == self.prefetchGeneration { self.prefetchSession = nil }
+                await reader.close()
+            } catch { /* No prefetch if connection limits or credentials disallow it. */ }
         }
     }
     private func acceptBrowseResult(_ rows: QueryResult) {
@@ -344,7 +486,7 @@ final class AppModel: ObservableObject {
     }
     func nextPage(_ delta: Int) {
         guard !isRunning, (delta < 0 ? browseOptions.page > 0 : hasNextPage) else { return }
-        browseOptions.page += delta; refreshData()
+        browseOptions.page += delta; refreshData(useCache: true)
     }
     func sortData(column: String) {
         guard !isRunning else { return }
@@ -407,10 +549,9 @@ final class AppModel: ObservableObject {
     }
     func cancelExecution() { pendingSQL = nil; pendingExecution = nil }
     var isReadOnly: Bool { profiles.first(where: { $0.id == connectedProfileID })?.readOnly == true }
-    var isProduction: Bool { profiles.first(where: { $0.id == connectedProfileID })?.environment == "Production" }
     var connectionLabel: String {
         guard let profile = profiles.first(where: { $0.id == connectedProfileID }) else { return "" }
-        return "\(NSLocalizedString(profile.environment ?? "Development", comment: "")) · \(profile.name) · \(profile.host):\(profile.port)" + (isReadOnly ? " · " + NSLocalizedString("READ ONLY", comment: "") : "")
+        return "\(profile.name) · \(profile.host):\(profile.port)" + (isReadOnly ? " · " + NSLocalizedString("READ ONLY", comment: "") : "")
     }
     func cancelCurrentQuery() {
         guard executingTabID != nil, !isCancelling, let session else { return }
@@ -423,6 +564,9 @@ final class AppModel: ObservableObject {
         }
     }
     private func execute(_ request: (sql: String, database: String, tabID: UUID)) {
+        // User SQL may change transactions, session variables or temporary tables.
+        // From this point keep browsing on its original connection until reconnect.
+        invalidateBrowsePages(); allowsBrowsePrefetch = false
         guard !isRunning, isConnected else { return }
         isRunning = true; errorMessage = nil
         cancelRequested = false; executingTabID = request.tabID; busyStage = NSLocalizedString("Preparing query", comment: "")
@@ -516,6 +660,7 @@ final class AppModel: ObservableObject {
         catch { show(error) }
     }
     private func mutate(_ sql: String) {
+        invalidateBrowsePages()
         isRunning = true
         let epoch = connectionAttemptID; let refreshSQL = lastBrowseSQL
         Task {
@@ -554,14 +699,20 @@ final class AppModel: ObservableObject {
     }
     private func loadPassword() {
         guard let id = selectedProfileID else { passwordLoadTask?.cancel(); password = ""; isLoadingPassword = false; return }
+        passwordNotice = nil
+        if let cached = sessionPasswords[id] { passwordLoadTask?.cancel(); password = cached; isLoadingPassword = false; return }
         password = ""; isLoadingPassword = true
         passwordLoadTask?.cancel()
         passwordLoadTask = Task { [weak self, keychain] in
-            let saved = try? await keychain.password(for: id)
+            let saved: String?
+            var unavailable = false
+            do { saved = try await keychain.password(for: id) }
+            catch { saved = nil; unavailable = true }
             guard let self, self.selectedProfileID == id, !Task.isCancelled else { return }
-            // Never overwrite a password the user entered while a system
-            // authorization dialog was open.
+            // Never overwrite a password entered while the asynchronous read ran.
             if self.password.isEmpty { self.password = saved ?? "" }
+            if let saved { self.sessionPasswords[id] = saved }
+            if unavailable { self.passwordNotice = NSLocalizedString("Saved password is unavailable. Click Connect to enter it; no system authorization is required.", comment: "") }
             self.isLoadingPassword = false
         }
     }

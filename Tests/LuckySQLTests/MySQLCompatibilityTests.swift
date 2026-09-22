@@ -209,6 +209,23 @@ final class MySQLCompatibilityTests: XCTestCase {
                 _ = try await session.query("DELETE FROM \(qualified)")
                 let values = (1...1205).map { "(\($0), 'row')" }.joined(separator: ",")
                 _ = try await session.query("INSERT INTO \(qualified) VALUES \(values)")
+                var paging = TableBrowseOptions(); paging.page = 1
+                let ascendingPage = try await session.query(paging.query(for: table, primaryKeys: ["id"], afterPrimaryKey: "100"))
+                XCTAssertEqual(ascendingPage.rows.count, 101)
+                XCTAssertEqual(ascendingPage.rows.first?.first, "101")
+                XCTAssertEqual(ascendingPage.rows.last?.first, "201")
+                paging.descending = true; paging.filterColumn = "value"; paging.filterOperator = .equals; paging.filterValue = "row"
+                let descendingPage = try await session.query(paging.query(for: table, primaryKeys: ["id"], afterPrimaryKey: "1106"))
+                XCTAssertEqual(descendingPage.rows.first?.first, "1105")
+                XCTAssertEqual(descendingPage.rows.last?.first, "1005")
+                if let reader = try await driver.connectPreview(profile: profile, password: password) {
+                    do {
+                        let mainID = try await session.query("SELECT CONNECTION_ID()")
+                        let readerID = try await reader.query("SELECT CONNECTION_ID()")
+                        XCTAssertNotEqual(mainID.rows, readerID.rows)
+                        await reader.close()
+                    } catch { await reader.close(); throw error }
+                } else { XCTFail("MySQL must support an isolated preview connection") }
                 let limited = try await session.query("SELECT * FROM \(qualified) ORDER BY id")
                 XCTAssertEqual(limited.rows.count, 1000)
                 let serverCount = try await session.query("SELECT FOUND_ROWS()")
@@ -236,6 +253,13 @@ final class MySQLCompatibilityTests: XCTestCase {
                     let cte = try await session.query("WITH c AS (SELECT * FROM \(qualified)) SELECT * FROM c")
                     XCTAssertEqual(cte.rows.count, 1000)
                 }
+                // Numeric cursors must not round through DOUBLE near UInt64.max.
+                _ = try await session.query("DELETE FROM \(qualified)")
+                _ = try await session.query("ALTER TABLE \(qualified) MODIFY id BIGINT UNSIGNED NOT NULL")
+                _ = try await session.query("INSERT INTO \(qualified) VALUES (18446744073709551614, 'row'), (18446744073709551615, 'row')")
+                paging.descending = false
+                let precisePage = try await session.query(paging.query(for: table, primaryKeys: ["id"], afterPrimaryKey: "18446744073709551614"))
+                XCTAssertEqual(precisePage.rows.map { $0[0] }, ["18446744073709551615"])
             } catch {
                 _ = try? await session.query("DROP TABLE \(qualified)")
                 throw error

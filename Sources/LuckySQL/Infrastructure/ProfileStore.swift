@@ -9,8 +9,7 @@ final class ProfileStore {
 
     func load() -> [ConnectionProfile] {
         guard let data = defaults.data(forKey: key),
-              let profiles = try? JSONDecoder().decode([ConnectionProfile].self, from: data),
-              !profiles.isEmpty else { return [.local] }
+              let profiles = try? JSONDecoder().decode([ConnectionProfile].self, from: data) else { return [.local] }
         return profiles
     }
 

@@ -11,7 +11,7 @@ struct EditorView: View {
                         ForEach(model.queryTabs) { tab in
                             HStack(spacing: 8) {
                                 Button { model.selectTab(tab.id) } label: {
-                                    Label(tab.title + (tab.isDirty ? " •" : ""), systemImage: "chevron.left.forwardslash.chevron.right").lineLimit(1)
+                                    QueryTabLabel(title: tab.title, document: tab.document)
                                 }.buttonStyle(.plain)
                                 Button {
                                     model.requestCloseTab(tab.id)
@@ -47,13 +47,11 @@ struct EditorView: View {
                 Button("History", systemImage: "clock.arrow.circlepath") { model.showHistory = true }
             }.controlSize(.small).padding(.horizontal, 12).frame(height: 40)
             Divider()
-            SQLTextEditor(text: $model.sql, selection: $model.sqlSelection, completionCatalog: model.completionCatalog, documentID: model.activeTabID.uuidString, sessions: model.editorSessions) { count in
-                if model.queryTabs[model.activeTabIndex].lineCount != count { model.queryTabs[model.activeTabIndex].lineCount = count }
-            }
+            QueryDocumentEditor(model: model, document: model.queryTabs[model.activeTabIndex].document, id: model.activeTabID)
             HStack {
                 Text("⌘↩ Run   ⇧⌘↩ All   ⌃Space / ⌥Esc Complete   ⌘F Find")
                 Spacer()
-                Text("Preview ≤ 1,000 rows · \(model.queryTabs[model.activeTabIndex].lineCount) lines")
+                QueryLineCount(document: model.queryTabs[model.activeTabIndex].document)
             }.font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 12).frame(height: 24).background(.bar)
         }
         .task(id: model.selectedDatabase + model.activeTabID.uuidString + String(model.isConnected)) { await model.loadCompletionMetadata() }
@@ -64,6 +62,30 @@ struct EditorView: View {
             TextField("Tab name", text: $rename)
             Button("Cancel", role: .cancel) { model.renamingTab = nil }
             Button("Save") { if let id = model.renamingTab { model.renameTab(id, title: rename) }; model.renamingTab = nil }
+        }
+    }
+}
+
+private struct QueryTabLabel: View {
+    let title: String
+    @ObservedObject var document: QueryDocument
+    var body: some View { Label(title + (document.isDirty ? " •" : ""), systemImage: "chevron.left.forwardslash.chevron.right").lineLimit(1) }
+}
+
+private struct QueryLineCount: View {
+    @ObservedObject var document: QueryDocument
+    var body: some View { Text("Preview ≤ 1,000 rows · \(document.lineCount) lines") }
+}
+
+private struct QueryDocumentEditor: View {
+    let model: AppModel
+    @ObservedObject var document: QueryDocument
+    let id: UUID
+    var body: some View {
+        SQLTextEditor(text: Binding(get: { document.sql }, set: { model.sql = $0 }),
+                      selection: Binding(get: { document.selection }, set: { document.selection = $0 }),
+                      completionCatalog: model.completionCatalog, documentID: id.uuidString, sessions: model.editorSessions) { count in
+            if document.lineCount != count { document.lineCount = count }
         }
     }
 }

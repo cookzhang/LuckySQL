@@ -12,11 +12,11 @@ enum SQLTools {
 
     // A single scanner gives highlighting and statement selection identical
     // quote/comment boundaries, including MySQL escapes and UTF-16 selections.
-    static func tokens(_ sql: String) -> [SQLToken] {
-        let input = Array(sql.utf16)
+    static func tokens(_ sql: String, from offset: Int = 0, stopAfter: ((SQLToken) -> Bool)? = nil) -> [SQLToken] {
+        var input = SQLScannerInput(sql)
         let ns = sql as NSString
         var output: [SQLToken] = []
-        var i = 0
+        var i = offset
         func space(_ c: UInt16) -> Bool { c == 32 || (9...13).contains(c) }
         func word(_ c: UInt16) -> Bool { c >= 128 || (65...90).contains(c) || (97...122).contains(c) || (48...57).contains(c) || c == 95 || c == 36 }
         while i < input.count {
@@ -52,7 +52,9 @@ enum SQLTools {
                 kind = keywords.contains(value.uppercased()) ? .keyword : ((48...57).contains(c) ? .number : .word)
             } else { i += 1 }
             let range = NSRange(location: start, length: i - start)
-            output.append(SQLToken(kind: kind, range: range, text: ns.substring(with: range)))
+            let token = SQLToken(kind: kind, range: range, text: ns.substring(with: range))
+            output.append(token)
+            if stopAfter?(token) == true { break }
         }
         return output
     }
@@ -122,6 +124,25 @@ enum SQLTools {
             }
         }
         return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+/// Bounded UTF-16 window: a local edit must not allocate a second full document.
+private struct SQLScannerInput {
+    let source: NSString
+    var count: Int { source.length }
+    private var start = -1
+    private var units = [unichar](repeating: 0, count: 4096)
+    init(_ sql: String) { source = sql as NSString }
+    subscript(index: Int) -> UInt16 {
+        mutating get {
+            if start < 0 || index < start || index >= start + units.count {
+                start = index
+                let length = min(units.count, count - start)
+                units.withUnsafeMutableBufferPointer { source.getCharacters($0.baseAddress!, range: NSRange(location: start, length: length)) }
+            }
+            return units[index - start]
+        }
     }
 }
 

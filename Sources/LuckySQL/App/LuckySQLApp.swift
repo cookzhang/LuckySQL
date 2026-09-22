@@ -18,6 +18,8 @@ struct LuckySQLApp: App {
                 Button("Check for Updates…") { updater.check() }.disabled(updater.busy)
             }
             CommandGroup(after: .newItem) {
+                Button("Add Connection…") { model.beginNewConnection() }.keyboardShortcut("n", modifiers: [.command, .shift]).disabled(model.isRunning)
+                Divider()
                 Button("New Query Tab") { model.newQuery() }.keyboardShortcut("t", modifiers: .command)
                 Button("Open SQL File…") { model.openSQLFile() }.keyboardShortcut("o", modifiers: .command)
                 Button("Save SQL As…") { model.saveSQLFile() }.keyboardShortcut("s", modifiers: .command)
@@ -33,6 +35,10 @@ struct LuckySQLApp: App {
                 Button("Next Query Tab") { model.cycleTab(1) }.keyboardShortcut("]", modifiers: [.command, .shift])
                 Button("Previous Query Tab") { model.cycleTab(-1) }.keyboardShortcut("[", modifiers: [.command, .shift])
                 Button("Close") {
+                    if model.connectionDraft != nil {
+                        if model.isRunning { model.disconnect() }
+                        model.cancelConnectionEditor(); return
+                    }
                     guard let window = NSApplication.shared.keyWindow else { return }
                     if WorkspaceWindows.closesQueryTab(in: window, section: model.section) { model.requestCloseTab(model.activeTabID) }
                     else { window.performClose(nil) }
@@ -40,7 +46,5 @@ struct LuckySQLApp: App {
                 Button("Cancel Query") { model.cancelCurrentQuery() }.keyboardShortcut(".", modifiers: .command).disabled(model.executingTabID == nil || model.isCancelling)
             }
         }
-
-        Settings { SettingsView().environmentObject(model) }
     }
 }

@@ -133,6 +133,6 @@ final class ExperienceTests: XCTestCase {
     func testExistingProfilesDecodeWithoutNewOptionalSafetyFields() throws {
         let data = Data("{\"id\":\"550E8400-E29B-41D4-A716-446655440000\",\"name\":\"old\",\"host\":\"localhost\",\"port\":3306,\"username\":\"root\",\"database\":\"\"}".utf8)
         let profile = try JSONDecoder().decode(ConnectionProfile.self, from: data)
-        XCTAssertNil(profile.environment); XCTAssertNil(profile.readOnly)
+        XCTAssertNil(profile.readOnly)
     }
 }

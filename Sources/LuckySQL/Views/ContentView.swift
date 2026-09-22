@@ -37,12 +37,13 @@ struct ContentView: View {
                     Text(LocalizedStringKey(model.isConnected ? "Connected" : "Disconnected"))
                     if let profile = model.profiles.first(where: { $0.id == model.connectedProfileID }) { Text(profile.host + ":" + String(profile.port)).foregroundStyle(.secondary) }
                     Spacer()
-                    if model.isLoadingPassword { ProgressView().controlSize(.mini); Text("Waiting for Keychain authorization…") }
+                    if model.isLoadingPassword { ProgressView().controlSize(.mini); Text("Loading saved password…") }
                     else if model.isRunning {
                         ProgressView().controlSize(.mini)
                         Text(model.busyStage.isEmpty ? "Working…" : model.busyStage).lineLimit(1)
                         if let start = model.busySince { Text(start, style: .timer).monospacedDigit() }
                     }
+                    else if let notice = model.passwordNotice { Text(notice).lineLimit(1).help(notice).foregroundStyle(.secondary) }
                     else { Text("MySQL workspace").foregroundStyle(.secondary) }
                 }.font(.caption).padding(.horizontal, 12).frame(height: 28).background(.bar)
             }
@@ -51,11 +52,11 @@ struct ContentView: View {
         .toolbar {
             ToolbarItemGroup {
                 if model.isConnected { Button("Disconnect", systemImage: "bolt.slash") { model.disconnect() }.disabled(model.isRunning) }
-                else { Button("Connect", systemImage: "bolt") { model.connect() }.disabled(model.isRunning) }
+                else { Button("Connect", systemImage: "bolt") { model.requestConnect() }.disabled(model.isRunning) }
                 Button("Run", systemImage: "play.fill") { model.runCurrentQuery() }.disabled(!model.isConnected || model.isRunning).help("Execute current statement or selection (⌘↩)")
                 Button("Find Table", systemImage: "magnifyingglass") { model.showTableFinder = true }.disabled(!model.isConnected || model.isRunning)
                 if !model.connectionLabel.isEmpty {
-                    Text(model.connectionLabel).font(.caption).foregroundStyle(model.isProduction ? .red : .secondary).lineLimit(1)
+                    Text(model.connectionLabel).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
                 if model.isRunning {
                     if model.executingTabID != nil {
@@ -75,9 +76,10 @@ struct ContentView: View {
                 } label: { Image(systemName: "ellipsis.circle") }.disabled(!model.isConnected || model.isRunning)
             }
         }
-        .alert("Database Error", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
+        .alert("Database Error", isPresented: Binding(get: { model.errorMessage != nil && model.connectionDraft == nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK") { model.errorMessage = nil }
         } message: { Text(model.errorMessage ?? "Unknown error") }
+        .sheet(item: $model.connectionDraft) { draft in ConnectionEditorView(draft: draft) }
         .sheet(isPresented: $model.showHistory) { QueryHistoryView() }
         .sheet(isPresented: $model.showTableFinder) { TableFinderView() }
         .sheet(isPresented: Binding(get: { model.pendingSQL != nil }, set: { if !$0 { model.cancelExecution() } })) {

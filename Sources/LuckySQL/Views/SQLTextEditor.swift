@@ -51,6 +51,7 @@ struct SQLTextEditor: NSViewRepresentable {
         scroll.verticalRulerView = SQLLineRuler(scrollView: scroll, orientation: .verticalRuler)
         scroll.rulersVisible = true
         coordinator.documentID = documentID
+        coordinator.pendingEdit = nil
         coordinator.scheduleHighlight(editor)
         return scroll
     }
@@ -63,6 +64,7 @@ struct SQLTextEditor: NSViewRepresentable {
         let scroll = sessions?.views[documentID] ?? makeScroll(coordinator)
         sessions?.views[documentID] = scroll
         coordinator.documentID = documentID
+        coordinator.pendingEdit = nil
         (scroll.documentView as? CodeTextView)?.delegate = coordinator
         scroll.translatesAutoresizingMaskIntoConstraints = false
         host.addSubview(scroll)
@@ -111,10 +113,20 @@ struct SQLTextEditor: NSViewRepresentable {
         var parent: SQLTextEditor
         var updating = false
         var documentID = ""
+        var pendingEdit: SQLTextEdit?
         private var highlightTask: Task<Void, Never>?
         init(_ parent: SQLTextEditor) { self.parent = parent }
         func undoManager(for view: NSTextView) -> UndoManager? { (view as? CodeTextView)?.undoManager }
+        func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
+            guard !updating, let replacementString else { pendingEdit = nil; return true }
+            let count = (replacementString as NSString).length
+            if pendingEdit != nil { pendingEdit?.append(range: affectedCharRange, replacementLength: count) }
+            else { pendingEdit = SQLTextEdit(original: textView.string, range: affectedCharRange, replacementLength: count) }
+            return true
+        }
         func textDidChange(_ notification: Notification) {
+            let interval = PerformanceTrace.signposter.beginInterval("Editor change")
+            defer { PerformanceTrace.signposter.endInterval("Editor change", interval) }
             guard !updating, let editor = notification.object as? NSTextView, !editor.hasMarkedText() else { return }
             parent.text = editor.string
             parent.selection.wrappedValue = editor.selectedRange()
@@ -129,17 +141,18 @@ struct SQLTextEditor: NSViewRepresentable {
         }
         func scheduleHighlight(_ editor: NSTextView) {
             highlightTask?.cancel()
-            let source = editor.string, id = documentID
+            let source = editor.string, id = documentID, edit = pendingEdit
             highlightTask = Task { @MainActor [weak self, weak editor] in
                 try? await Task.sleep(for: .milliseconds(80))
                 guard !Task.isCancelled else { return }
-                let analysis = await SQLAnalysisService.shared.analyze(source, document: id)
+                let analysis = await SQLAnalysisService.shared.analyze(source, document: id, edit: edit)
                 guard !Task.isCancelled, let self, self.documentID == id, let editor, editor.string == source else { return }
                 if let code = editor as? CodeTextView {
                     code.analysis = analysis
                     code.colorVisibleText()
                 } else { self.apply(analysis.tokens, to: editor) }
                 self.parent.onAnalysis?(analysis.lineStarts.count)
+                self.pendingEdit = nil
             }
         }
         private func apply(_ tokens: [SQLToken], to editor: NSTextView) {
@@ -189,21 +202,48 @@ final class CodeTextView: NSTextView {
     private let documentUndoManager = UndoManager()
     override var undoManager: UndoManager? { documentUndoManager }
     var analysisID = UUID().uuidString
-    var analysis: SQLAnalysis?
+    var analysis: SQLAnalysis? { didSet { paintedRange = nil } }
+    private var paintedRange: NSRange?
+    private var colorScheduled = false
+    private(set) var colorPassCount = 0
     private var scrollObserver: NSObjectProtocol?
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
         if let clip = enclosingScrollView?.contentView {
             clip.postsBoundsChangedNotifications = true
-            scrollObserver = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: .main) { [weak self] _ in self?.colorVisibleText() }
+            scrollObserver = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: .main) { [weak self] _ in self?.scheduleVisibleColor() }
         }
     }
     deinit { if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) } }
+    private func scheduleVisibleColor() {
+        guard !colorScheduled else { return }
+        colorScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            self?.colorScheduled = false
+            self?.colorVisibleText()
+        }
+    }
     func colorVisibleText() {
+        let interval = PerformanceTrace.signposter.beginInterval("Visible highlight")
+        defer { PerformanceTrace.signposter.endInterval("Visible highlight", interval) }
         guard !hasMarkedText(), let analysis, analysis.sql == string, let layout = layoutManager, let container = textContainer else { return }
         let glyphs = layout.glyphRange(forBoundingRect: visibleRect.insetBy(dx: 0, dy: -300), in: container)
         let range = layout.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
+        let previous = paintedRange
+        if let previous, NSIntersectionRange(previous, range) == range { return }
+        let missing: [NSRange]
+        if let previous, NSIntersectionRange(previous, range).length > 0 {
+            missing = [NSRange(location: range.location, length: max(0, previous.location - range.location)),
+                       NSRange(location: max(range.location, NSMaxRange(previous)), length: max(0, NSMaxRange(range) - NSMaxRange(previous)))].filter { $0.length > 0 }
+            paintedRange = NSUnionRange(previous, range)
+        } else { missing = [range]; paintedRange = range }
+        for part in missing { color(part, analysis: analysis, layout: layout) }
+        enclosingScrollView?.verticalRulerView?.needsDisplay = true
+    }
+    private func color(_ range: NSRange, analysis: SQLAnalysis, layout: NSLayoutManager) {
+        guard range.length > 0 else { return }
+        colorPassCount += 1
         layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: range)
         var low = 0, high = analysis.tokens.count
         while low < high { let mid = (low + high) / 2; if NSMaxRange(analysis.tokens[mid].range) < range.location { low = mid + 1 } else { high = mid } }
@@ -220,7 +260,6 @@ final class CodeTextView: NSTextView {
             }
             layout.addTemporaryAttribute(.foregroundColor, value: color, forCharacterRange: NSIntersectionRange(range, token.range))
         }
-        enclosingScrollView?.verticalRulerView?.needsDisplay = true
     }
     var completionCatalog = SQLCompletionCatalog() {
         didSet {

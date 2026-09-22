@@ -5,7 +5,7 @@ LuckySQL is a free, open-source, native macOS MySQL workbench built with Swift a
 ## Workbench features
 
 - Multiple connection profiles (`host`, `port`, `user`, `password`, default database)
-- Passwords stored in macOS Keychain; non-secret profile fields stored in UserDefaults
+- Passwords stored in macOS Keychain when silently accessible; no Keychain authorization popups. If storage is unavailable, re-enter the password for the current session only; passwords are never written to UserDefaults
 - Pure-Swift MySQL connection through MySQLNIO; no `libmysqlclient` installation
 - Database/schema/table navigation tree with column types, nullability, and primary-key details
 - Color-coded SQL editor with line numbers, native find, automatic keyword/schema/table/alias-column suggestions (**Control–Space** or **Option–Escape** opens suggestions; **Tab/Return** accepts, **Escape** dismisses), and basic formatting
@@ -18,11 +18,12 @@ LuckySQL is a free, open-source, native macOS MySQL workbench built with Swift a
 - CSV/JSON export of the current result/page, TSV copying, favorites, and loaded-table search
 - SQL write confirmation, multi-result selection, preview row limits, and stop/disconnect
 - In-app GitHub release checks, SHA-256-verified downloads, confirmed installation with a retained backup, and restart
-- Background incremental SQL analysis, viewport-only coloring, indexed line numbers, stable completion suggestions with type/source hints
+- Background edit-range SQL analysis with token-boundary convergence, incremental line numbers, scroll-range coloring reuse, and per-document state isolation
+- Bounded 30-second page cache, conservative integer-primary-key seek pagination, and isolated next-page prefetch; explicit Refresh always fetches current server data
 - Independent per-tab undo/caret/scroll, dirty markers, rename/close/switch shortcuts, and remembered split/column layouts
 - **Command–P** finds tables across all visible databases, including collapsed schemas; recently visited tables appear first
 - **Command–Period** cancels the current SQL through a separate control connection without disconnecting; elapsed time and previous results remain visible
-- Production/staging/development badges, optional client-side read-only protection, and English / Simplified Chinese packaged UI (restart after changing language)
+- Direct in-workspace connection form; no separate Settings window or environment configuration. Existing read-only protections remain effective; English / Simplified Chinese localization is packaged
 - Clear driver/session boundary for future database engines
 
 ## Requirements
@@ -47,7 +48,7 @@ Installation needs a writable, non-translocated app location (move the app to Ap
 2. Open `Package.swift` in Xcode.
 3. Select the `LuckySQL` executable scheme and **My Mac** destination.
 4. Build and run.
-5. Open **LuckySQL → Settings**, add connection details, and choose **Save & Connect**.
+5. Click **Add Connection…** in the sidebar (or **⇧⌘N**), enter host/port/user/password, and choose **Connect**. Name and database are optional. The pencil beside a saved connection edits it; its context menu provides deletion.
 
 From Terminal with a full Xcode selected:
 
@@ -84,7 +85,7 @@ The integration test also verifies the 1,000-row server-side limit, smaller expl
 To create a distributable Apple Silicon app bundle locally:
 
 ```sh
-./scripts/package-release.sh 0.3.0
+./scripts/package-release.sh 0.3.1
 ```
 
 The archive and its SHA-256 checksum are written to `dist/`.
@@ -103,6 +104,8 @@ Sources/LuckySQL/
 ```
 
 See [Architecture](Docs/ARCHITECTURE.md) and [Roadmap](Docs/ROADMAP.md) for design decisions and planned work.
+
+See [Responsiveness verification](Docs/PERFORMANCE.md) for workloads, measured analysis costs, profiling intervals, and limits. Ad-hoc signatures can prevent a new build from silently reading an old build's Keychain item; LuckySQL asks for re-entry inside connection settings instead of opening an OS authorization dialog. It does not weaken Keychain permissions to avoid this.
 
 See the detailed [HeidiSQL comparison and acceptance checklist](Docs/HEIDISQL_PARITY.md) for implemented capabilities and remaining gaps. Feature parity is not complete.
 
