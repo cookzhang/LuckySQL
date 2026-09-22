@@ -16,7 +16,11 @@ DatabaseDriver/Session     engine-neutral async boundary
 
 ### App and views
 
-`AppModel` owns the current profile, session, schema tree, editor text, and query result. All published changes happen on the main actor. `EditorSessions` retains each tab's native scroll view/text view and private undo manager across SwiftUI view replacement. `SQLAnalysisService` scans on its actor, reuses unchanged token prefixes, caches line offsets and shares analysis with statement-scoped completion. Highlight application touches only the viewport. Views do not import MySQLNIO.
+Connection creation/editing is a sheet owned by the workspace, not an application Settings scene. `ConnectionDraft` isolates unsaved changes and validates the host/port/user before persisting. Cancel leaves saved profiles untouched; connection failures stay inline for retry. The only fields are host, port, user, password, optional database and optional name. Legacy environment tags are ignored on decode and are no longer displayed or written. Existing read-only flags remain effective. Saved connections expose edit/delete actions directly in the sidebar, and deleting the last profile no longer recreates a phantom connection.
+
+`AppModel` owns the current profile, session, schema tree, and query results. Each tab's `QueryDocument` publishes text/line/dirty state only to its editor and labels; caret changes do not publish view updates. All UI mutations happen on the main actor. `EditorSessions` retains native text views and private undo managers across view replacement. `SQLAnalysisService` consumes coalesced UTF-16 edit ranges, restarts before the edit and stops lexing when an unchanged token boundary matches. It reuses the remaining suffix and incrementally updates line offsets. External replacements fall back to a prefix/suffix diff. Unterminated quotes/comments may legitimately require scanning to EOF. Flat token arrays still require copying/offset adjustment; this is not a constant-time parser. Analysis cache is limited to eight documents and an estimated 96 MiB (one active snapshot is retained).
+
+Highlighting coalesces scroll notifications and only colors previously uncovered viewport ranges, with a 300-point look-ahead. Grid selection keys are computed only when results change; empty selections skip all-row key generation. Visible cell text is cached with a 2,048-cell bound. Keyboard/context-menu TSV encoding runs off-main and checks pasteboard generation before publishing. Table search normalizes/indexes metadata off-main, then debounces and filters immutable snapshots; late results are discarded. Views do not import MySQLNIO.
 
 ### Domain
 
@@ -34,7 +38,15 @@ Domain models are deliberately engine-neutral. `QueryResult` is a display-orient
 
 Connection profile metadata is Codable and stored in `UserDefaults`. Passwords are keyed by profile UUID and stored separately through the Security framework in Keychain. `PasswordStoring` allows an in-memory fake in tests.
 
+All legacy file-based Keychain operations run synchronously inside a serialized no-interaction scope, restoring the prior policy afterwards. This deliberately uses the deprecated macOS `SecKeychain` interaction API because `LAContext` is not a replacement for existing file-based ACLs. No ACL is broadened and no item is deleted to bypass trust. If access requires authorization, the app shows a nonmodal message and lets the user enter the password. Successful connections survive secure-storage failures; that password is then kept only in process memory. Ad-hoc builds do not have a stable Developer ID identity, so silent access to a prior build's password cannot be promised. Stable signing is needed for a seamless cross-update persistence story.
+
 Draft/history JSON serialization uses an ordered background queue with an explicit termination flush. SQL file reads/writes, formatting and result-file encoding/writes run off the main actor with immutable snapshots. Tab IDs guard asynchronous saves against tab switches. Column metadata in-flight requests are coalesced; explicit refresh and successful writes invalidate cached snapshots.
+
+### Browse previews
+
+`BrowsePageCache` is connection-scoped, capped at eight pages / 16 MiB estimated data plus container overhead, and expires entries after 30 seconds. Explicit refresh/filter changes, mutation attempts, arbitrary SQL and connection changes invalidate it. Sequential pages use keyset predicates only with one integer primary key and compatible ordering; other sorts/key types retain OFFSET. Previous pages can reuse cached snapshots. A cached preview is not a live database view; use Refresh to observe external writes immediately.
+
+After an idle delay, one generated next-page SELECT may use a separate short-lived connection. It never borrows the foreground transaction connection, changes busy/error UI, or delays execution in its queue. Cancellation closes the speculative connection; epoch/generation guards reject stale results. Prefetch is disabled after any user SQL until reconnect, because arbitrary SQL can change transaction/session/temporary-table semantics. Drivers may decline speculative connections. Foreground metadata remains serialized on the original connection; background metadata discovery yields before scheduling further work when a query starts.
 
 ## Extension seams
 

@@ -185,7 +185,7 @@ final class LuckySQLTests: XCTestCase {
         defer { store.flush(); defaults.removePersistentDomain(forName: name) }
         let session = StubSession()
         let model = AppModel(profileStore: ProfileStore(defaults: defaults), keychain: StubPasswordStore(), driver: StubDriver(session: session), workspaceStore: store)
-        model.profiles[0].readOnly = true; model.profiles[0].environment = "Production"
+        model.profiles[0].readOnly = true
         model.connect(); try await waitUntil { model.isConnected && !model.isRunning }
         model.sql = "DELETE FROM orders;"; model.runCurrentQuery()
         XCTAssertNotNil(model.errorMessage); XCTAssertNil(model.pendingSQL)
@@ -194,7 +194,8 @@ final class LuckySQLTests: XCTestCase {
         model.updateCell(row: 0, column: 1, value: "bad"); model.deleteRow(0)
         let queries = await session.queries()
         XCTAssertFalse(queries.contains(where: { $0.hasPrefix("DELETE") || $0.hasPrefix("UPDATE") }))
-        XCTAssertTrue(model.connectionLabel.contains("Production")); XCTAssertTrue(model.connectionLabel.contains("READ ONLY"))
+        XCTAssertFalse(model.connectionLabel.contains("Production")); XCTAssertTrue(model.connectionLabel.contains("READ ONLY"))
+        XCTAssertTrue(model.connectionLabel.contains("127.0.0.1:3306"))
         model.disconnect()
     }
 

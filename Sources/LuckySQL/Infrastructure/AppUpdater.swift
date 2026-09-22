@@ -201,7 +201,7 @@ final class AppUpdater: ObservableObject {
     private var task: Task<Void, Never>?
     private let service: UpdateService
     let currentVersion: String
-    init(service: UpdateService = UpdateService(), currentVersion: String = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.3.0") {
+    init(service: UpdateService = UpdateService(), currentVersion: String = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.3.1") {
         self.service = service; self.currentVersion = currentVersion
     }
     func check() {

@@ -10,6 +10,10 @@ final class MySQLDriver: DatabaseDriver, @unchecked Sendable {
     init() { group = MultiThreadedEventLoopGroup(numberOfThreads: 1) }
     deinit { try? group.syncShutdownGracefully() }
 
+    func connectPreview(profile: ConnectionProfile, password: String) async throws -> (any DatabaseSession)? {
+        try await connect(profile: profile, password: password)
+    }
+
     func connect(profile: ConnectionProfile, password: String) async throws -> any DatabaseSession {
         do {
             let address = try SocketAddress.makeAddressResolvingHost(profile.host, port: profile.port)

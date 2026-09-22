@@ -2,7 +2,7 @@ import SwiftUI
 
 struct SchemaSidebar: View {
     @EnvironmentObject private var model: AppModel
-    @Environment(\.openSettings) private var openSettings
+    @State private var deletingProfile: ConnectionProfile?
     @State private var expandedConnections = Set<UUID>()
     @State private var expandedSchemas = Set<String>()
     @State private var search = ""
@@ -20,10 +20,18 @@ struct SchemaSidebar: View {
                         Text(profile.name)
                             .lineLimit(1)
                         Spacer()
+                        Button { model.beginEditConnection(profile.id) } label: { Image(systemName: "pencil") }
+                            .buttonStyle(.plain).help("Edit Connection…").disabled(model.isRunning)
                         if model.connectingProfileID == profile.id {
                             ProgressView().controlSize(.small)
                         }
                     }
+                }
+                .contextMenu {
+                    Button("Connect") { model.requestConnect(to: profile.id) }.disabled(model.isRunning || model.connectedProfileID == profile.id)
+                    Button("Edit Connection…") { model.beginEditConnection(profile.id) }.disabled(model.isRunning)
+                    Divider()
+                    Button("Delete Connection…", role: .destructive) { deletingProfile = profile }.disabled(model.isRunning)
                 }
             }
         }
@@ -37,12 +45,13 @@ struct SchemaSidebar: View {
         }
         .safeAreaInset(edge: .bottom) {
             Button {
-                openSettings()
+                model.beginNewConnection()
             } label: {
                 Label("Add Connection…", systemImage: "plus.circle.fill")
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.borderless)
+            .disabled(model.isRunning)
             .padding(10)
             .background(.bar)
         }
@@ -63,6 +72,9 @@ struct SchemaSidebar: View {
         .onChange(of: model.connectedProfileID) { _, profileID in
             expandConnectedProfile(profileID)
         }
+        .confirmationDialog("Delete Connection?", isPresented: Binding(get: { deletingProfile != nil }, set: { if !$0 { deletingProfile = nil } })) {
+            Button("Delete Connection", role: .destructive) { if let profile = deletingProfile { model.deleteProfile(profile.id) }; deletingProfile = nil }
+        } message: { Text("Only the saved connection will be removed. Database data is unchanged.") }
     }
 
     @ViewBuilder
@@ -186,7 +198,7 @@ struct SchemaSidebar: View {
                 expandedConnections = [profile.id]
                 if model.connectedProfileID != profile.id && model.connectingProfileID != profile.id {
                     expandedSchemas.removeAll()
-                    model.connect(to: profile.id)
+                    model.requestConnect(to: profile.id)
                 }
             } else {
                 expandedConnections.remove(profile.id)

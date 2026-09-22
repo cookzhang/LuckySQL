@@ -39,7 +39,7 @@ struct DataGrid: NSViewRepresentable {
         let old = context.coordinator.parent.result
         let changed = old.id != result.id
         let changedGrid = context.coordinator.parent.gridID != gridID
-        let selected = context.coordinator.selectedKeys()
+        let selected = changed && !changedGrid ? context.coordinator.selectedKeys() : []
         if changedGrid { context.coordinator.rememberScroll() }
         context.coordinator.parent = self
         if changed || changedGrid { context.coordinator.reload(selection: changedGrid ? [] : selected, changedGrid: changedGrid) }
@@ -54,6 +54,9 @@ struct DataGrid: NSViewRepresentable {
         var parent: DataGrid
         weak var table: NSTableView?
         private var columns: [String] = []
+        private var keyIndices: [Int] = []
+        private var displayCache: [CellAddress: (text: String, tooltip: String)] = [:]
+        private var copyTask: Task<Void, Never>?
         private static var offsets: [String: NSPoint] = [:]
         init(_ parent: DataGrid) { self.parent = parent }
         func rememberScroll() {
@@ -67,7 +70,7 @@ struct DataGrid: NSViewRepresentable {
         }
         private func rowKey(_ row: Int) -> [String]? {
             guard parent.result.rows.indices.contains(row) else { return nil }
-            let indices = parent.primaryKeys.isEmpty ? Array(parent.result.columns.indices) : parent.primaryKeys.compactMap { parent.result.columns.firstIndex(of: $0) }
+            let indices = keyIndices
             guard !indices.isEmpty, parent.primaryKeys.isEmpty || indices.count == parent.primaryKeys.count else { return nil }
             return indices.flatMap { index -> [String] in
                 guard parent.result.rows[row].indices.contains(index) else { return ["missing"] }
@@ -75,7 +78,11 @@ struct DataGrid: NSViewRepresentable {
             }
         }
         func reload(selection: Set<[String]> = [], changedGrid: Bool = false) {
+            let interval = PerformanceTrace.signposter.beginInterval("Grid reload")
+            defer { PerformanceTrace.signposter.endInterval("Grid reload", interval) }
             guard let table else { return }
+            displayCache.removeAll(keepingCapacity: true)
+            keyIndices = parent.primaryKeys.isEmpty ? Array(parent.result.columns.indices) : parent.primaryKeys.compactMap { parent.result.columns.firstIndex(of: $0) }
             let origin = changedGrid ? NSPoint.zero : table.enclosingScrollView?.contentView.bounds.origin ?? .zero
             let restored = Self.offsets[parent.gridID] ?? origin
             if columns != parent.result.columns {
@@ -90,7 +97,7 @@ struct DataGrid: NSViewRepresentable {
                 }
             }
             table.reloadData()
-            let indices = parent.result.rows.indices.filter { rowKey($0).map(selection.contains) == true }
+            let indices = selection.isEmpty ? [] : parent.result.rows.indices.filter { rowKey($0).map(selection.contains) == true }
             table.selectRowIndexes(IndexSet(indices), byExtendingSelection: false)
             (table as? CopyableTableView)?.activeRow = table.selectedRow
             if let scroll = table.enclosingScrollView {
@@ -114,9 +121,17 @@ struct DataGrid: NSViewRepresentable {
             }
             let value = parent.result.rows[row][column]
             let isNull = parent.result.isNull(row: row, column: column)
-            cell.textField?.stringValue = isNull ? "NULL" : String(value.prefix(512)) + (value.utf16.count > 512 ? "…" : "")
+            let address = CellAddress(row: row, column: column)
+            let display: (text: String, tooltip: String)
+            if let cached = displayCache[address] { display = cached }
+            else {
+                display = CellDisplayPreview.make(value, isNull: isNull)
+                if displayCache.count >= 2048 { displayCache.removeAll(keepingCapacity: true) }
+                displayCache[address] = display
+            }
+            cell.textField?.stringValue = display.text
             cell.textField?.textColor = isNull ? .tertiaryLabelColor : .labelColor
-            cell.toolTip = String(value.prefix(1000))
+            cell.toolTip = display.tooltip
             return cell
         }
         func tableView(_ tableView: NSTableView, didClick tableColumn: NSTableColumn) {
@@ -147,10 +162,33 @@ struct DataGrid: NSViewRepresentable {
             guard let table else { return }
             let indices = table.selectedRowIndexes.isEmpty ? IndexSet(integer: max(0, table.clickedRow)) : table.selectedRowIndexes
             let order = table.tableColumns.compactMap { Int($0.identifier.rawValue) }
-            let rows = indices.filter { parent.result.rows.indices.contains($0) }.map { row in order.map { parent.result.rows[row][$0] } }
-            copy(ResultExport.csv(QueryResult(columns: order.map { parent.result.columns[$0] }, rows: rows, elapsed: .zero, message: ""), separator: "\t"))
+            let snapshot = parent.result
+            copyTask?.cancel()
+            let changeCount = NSPasteboard.general.changeCount
+            copyTask = Task { [weak self] in
+                let text = await Task.detached(priority: .userInitiated) {
+                    let rows = indices.filter { snapshot.rows.indices.contains($0) }.map { row in order.map { snapshot.rows[row][$0] } }
+                    return ResultExport.csv(QueryResult(columns: order.map { snapshot.columns[$0] }, rows: rows, elapsed: .zero, message: ""), separator: "\t")
+                }.value
+                guard !Task.isCancelled, NSPasteboard.general.changeCount == changeCount else { return }
+                self?.copy(text)
+            }
         }
         private func copy(_ text: String) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string) }
+    }
+}
+
+enum CellDisplayPreview {
+    /// Bound UTF-16 work even when one grapheme contains thousands of combining
+    /// marks. A Character-count limit alone cannot protect native cell layout.
+    static func make(_ value: String, isNull: Bool) -> (text: String, tooltip: String) {
+        let units = Array(value.utf16.prefix(1001))
+        func prefix(_ limit: Int) -> String {
+            var end = min(limit, units.count)
+            if end > 0, (0xD800...0xDBFF).contains(units[end - 1]) { end -= 1 }
+            return String(decoding: units[..<end], as: UTF16.self) + (units.count > limit ? "…" : "")
+        }
+        return (isNull ? "NULL" : prefix(512), prefix(1000))
     }
 }
 
@@ -158,8 +196,12 @@ final class CopyableTableView: NSTableView {
     var copyRows: (() -> Void)?
     var copyCell: (() -> Void)?
     var previewCell: (() -> Void)?
-    var activeColumn = 0 { didSet { needsDisplay = true } }
-    var activeRow = -1
+    var activeColumn = 0 { didSet { invalidateCell(column: oldValue, row: activeRow); invalidateCell(column: activeColumn, row: activeRow) } }
+    var activeRow = -1 { didSet { invalidateCell(column: activeColumn, row: oldValue); invalidateCell(column: activeColumn, row: activeRow) } }
+    private func invalidateCell(column: Int, row: Int) {
+        guard tableColumns.indices.contains(column), row >= 0, row < numberOfRows else { return }
+        setNeedsDisplay(frameOfCell(atColumn: column, row: row))
+    }
     override func mouseDown(with event: NSEvent) {
         activeColumn = max(0, column(at: convert(event.locationInWindow, from: nil)))
         activeRow = row(at: convert(event.locationInWindow, from: nil))
@@ -186,6 +228,5 @@ final class CopyableTableView: NSTableView {
         if event.keyCode == 36 || event.keyCode == 49 { previewCell?(); return }
         super.keyDown(with: event)
         activeRow = selectedRow
-        needsDisplay = true
     }
 }

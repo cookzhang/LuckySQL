@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 struct ConnectionProfile: Identifiable, Codable, Hashable, Sendable {
     var id = UUID()
@@ -7,7 +8,6 @@ struct ConnectionProfile: Identifiable, Codable, Hashable, Sendable {
     var port = 3306
     var username = "root"
     var database = ""
-    var environment: String?
     var readOnly: Bool?
 
     static let local = ConnectionProfile()
@@ -102,15 +102,31 @@ enum WorkspaceSection: String, CaseIterable {
 struct QueryTab: Identifiable {
     let id = UUID()
     var title: String
-    var sql: String
+    let document: QueryDocument
+    var sql: String { get { document.sql } nonmutating set { document.sql = newValue } }
     var database: String
-    var selection = NSRange(location: 0, length: 0)
+    var selection: NSRange { get { document.selection } nonmutating set { document.selection = newValue } }
     var result = QueryResult.empty
     var results: [QueryResult] = []
     var fileURL: URL?
-    var savedSQL: String?
-    var lineCount = 1
+    var savedSQL: String? { get { document.savedSQL } nonmutating set { document.savedSQL = newValue } }
+    var lineCount: Int { get { document.lineCount } nonmutating set { document.lineCount = newValue } }
+    var isDirty: Bool { document.isDirty }
+
+    init(title: String, sql: String, database: String) {
+        self.title = title; self.document = QueryDocument(sql: sql); self.database = database
+    }
+}
+
+/// High-frequency editor state never publishes a workspace-wide change.
+/// Selection is native editor state; observing it would redraw on every arrow key.
+final class QueryDocument: ObservableObject {
+    @Published var sql: String
+    @Published var savedSQL: String?
+    @Published var lineCount = 1
+    var selection = NSRange(location: 0, length: 0)
     var isDirty: Bool { savedSQL.map { $0 != sql } ?? !sql.isEmpty }
+    init(sql: String) { self.sql = sql }
 }
 
 struct QueryHistoryEntry: Identifiable, Codable, Sendable {
@@ -135,7 +151,7 @@ enum FilterOperator: String, CaseIterable {
     var needsValue: Bool { self != .isNull && self != .isNotNull }
 }
 
-struct TableBrowseOptions {
+struct TableBrowseOptions: Hashable, Sendable {
     var page = 0
     var pageSize = 100
     var filterColumn = ""
@@ -144,7 +160,7 @@ struct TableBrowseOptions {
     var sortColumn = ""
     var descending = false
 
-    func query(for table: DatabaseTable, primaryKeys: [String]) throws -> String {
+    func query(for table: DatabaseTable, primaryKeys: [String], afterPrimaryKey: String? = nil) throws -> String {
         var sql = "SELECT * FROM \(try SQLIdentifier.quote(table.schema)).\(try SQLIdentifier.quote(table.name))"
         if !filterColumn.isEmpty {
             let column = try SQLIdentifier.quote(filterColumn)
@@ -159,12 +175,22 @@ struct TableBrowseOptions {
             case .isNotNull: sql += " WHERE \(column) IS NOT NULL"
             }
         }
+        let seek = page > 0 && afterPrimaryKey != nil && primaryKeys.count == 1 && (sortColumn.isEmpty || sortColumn == primaryKeys[0])
+        if seek, let afterPrimaryKey {
+            // Quoted numeric cursors can force DOUBLE comparison in MySQL and
+            // lose BIGINT precision. Only emit a validated integer literal.
+            let digits = afterPrimaryKey.hasPrefix("-") ? afterPrimaryKey.dropFirst() : afterPrimaryKey[...]
+            guard !digits.isEmpty, digits.utf8.allSatisfy({ (48...57).contains($0) }),
+                  Int64(afterPrimaryKey) != nil || UInt64(afterPrimaryKey) != nil else { throw DatabaseError.invalidIdentifier(afterPrimaryKey) }
+            sql += filterColumn.isEmpty ? " WHERE " : " AND "
+            sql += "\(try SQLIdentifier.quote(primaryKeys[0])) \(descending ? "<" : ">") \(afterPrimaryKey)"
+        }
         var ordering = sortColumn.isEmpty ? [] : [sortColumn]
         ordering += primaryKeys.filter { !ordering.contains($0) }
         if !ordering.isEmpty {
             sql += " ORDER BY " + (try ordering.map { try SQLIdentifier.quote($0) + (descending ? " DESC" : " ASC") }.joined(separator: ", "))
         }
-        return sql + " LIMIT \(pageSize + 1) OFFSET \(max(0, page) * pageSize);"
+        return sql + " LIMIT \(pageSize + 1)" + (seek ? ";" : " OFFSET \(max(0, page) * pageSize);")
     }
 }
 
