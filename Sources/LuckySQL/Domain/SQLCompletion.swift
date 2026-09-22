@@ -1,19 +1,21 @@
 import Foundation
 
-struct SQLCompletionCatalog {
+struct SQLCompletionCatalog: Sendable {
     var schemas: [DatabaseSchema] = []
     var columns: [String: [TableColumn]] = [:]
     var database = ""
 }
 
-struct SQLCompletionRequest {
+struct SQLCompletionRequest: Sendable {
     var range: NSRange
     var candidates: [String]
     var caret: Int
+    var prefix = ""
+    var details: [String: String] = [:]
 }
 
 enum SQLCompletion {
-    struct Reference: Equatable {
+    struct Reference: Equatable, Sendable {
         let table: DatabaseTable
         let alias: String?
     }
@@ -95,7 +97,16 @@ enum SQLCompletion {
         if let wholeToken, (quoted && hasClosingQuote) || (!quoted && (wholeToken.kind == .word || wholeToken.kind == .keyword)) {
             range = wholeToken.range
         }
-        return SQLCompletionRequest(range: range, candidates: Array(candidates.prefix(100)), caret: caret)
+        var details: [String: String] = [:]
+        for candidate in candidates.prefix(100) {
+            let name = candidate.replacingOccurrences(of: "`", with: "")
+            if words.contains(candidate) { details[candidate] = "SQL keyword" }
+            else if catalog.schemas.contains(where: { $0.name == name }) { details[candidate] = "Database" }
+            else if let table = catalog.schemas.flatMap(\.tables).first(where: { $0.name == name }) { details[candidate] = table.schema + " · table" }
+            else if let ref = refs.first(where: { catalog.columns[$0.table.id, default: []].contains(where: { $0.name == name }) }),
+                    let column = catalog.columns[ref.table.id]?.first(where: { $0.name == name }) { details[candidate] = ref.table.name + " · " + column.dataType }
+        }
+        return SQLCompletionRequest(range: range, candidates: Array(candidates.prefix(100)), caret: caret, prefix: prefix, details: details)
     }
 
     private static func isIdentifier(_ token: SQLToken) -> Bool { token.kind == .word || token.kind == .identifier }

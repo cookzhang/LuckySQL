@@ -96,6 +96,51 @@ final class MySQLCompatibilityTests: XCTestCase {
         try feed(definition, to: command, capabilities: capabilities)
     }
 
+    func testByteBudgetKeepsContiguousPrefixAndDrainsProtocol() throws {
+        for capabilities in [legacy, modern] {
+            let command = MySQLTextQuery("SELECT value", byteLimit: 4)
+            try begin(command, capabilities: capabilities)
+            let end: [UInt8] = capabilities.contains(.CLIENT_DEPRECATE_EOF) ? [0xfe, 0, 0, 2, 0, 0, 0] : [0xfe, 0, 0, 2, 0]
+            if !capabilities.contains(.CLIENT_DEPRECATE_EOF) { try feed(end, to: command, capabilities: capabilities) }
+            try feed([1, 65], to: command, capabilities: capabilities)
+            try feed([4, 66, 66, 66, 66], to: command, capabilities: capabilities)
+            try feed([0], to: command, capabilities: capabilities)
+            try feed(end, to: command, capabilities: capabilities)
+            XCTAssertTrue(command.isComplete)
+            XCTAssertEqual(command.rowCount, 3)
+            XCTAssertEqual(command.retainedBytes, 2)
+            XCTAssertTrue(command.byteLimitReached)
+            XCTAssertEqual(command.rows.count, 1)
+            XCTAssertEqual(command.rows[0].column("value")?.string, "A")
+        }
+    }
+
+    func testLiveCancellationKeepsConnectionAndNextQuerySafe() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let password = env["LUCKYSQL_TEST_PASSWORD"], let port = env["LUCKYSQL_TEST_PORT"].flatMap(Int.init) else { throw XCTSkip("Configure a local MySQL server to test KILL QUERY") }
+        let driver = MySQLDriver()
+        let session = try await driver.connect(profile: ConnectionProfile(host: "127.0.0.1", port: port, username: env["LUCKYSQL_TEST_USER"] ?? "luckysql"), password: password)
+        do {
+            let identity = try await session.query("SELECT CONNECTION_ID()")
+            let start = ContinuousClock.now
+            let running = Task { try await session.query("SELECT SLEEP(10), 42") }
+            try await Task.sleep(for: .milliseconds(200))
+            async let cancel: Void = session.cancelQuery()
+            // This command is queued while the cancellation connection opens.
+            // It must never become the target of the preceding KILL QUERY.
+            let next = Task { try await session.query("SELECT 99") }
+            try await cancel
+            _ = try? await running.value
+            let nextResult = try await next.value
+            XCTAssertEqual(nextResult.rows, [["99"]])
+            XCTAssertLessThan(start.duration(to: .now), .seconds(5))
+            let sameConnection = try await session.query("SELECT CONNECTION_ID()")
+            XCTAssertEqual(sameConnection.rows, identity.rows)
+            await session.close()
+        } catch { await session.close(); throw error }
+        withExtendedLifetime(driver) {}
+    }
+
     private func feed(_ bytes: [UInt8], to command: MySQLTextQuery, capabilities: MySQLProtocol.CapabilityFlags) throws {
         var buffer = ByteBufferAllocator().buffer(capacity: bytes.count)
         buffer.writeBytes(bytes)
@@ -173,6 +218,14 @@ final class MySQLCompatibilityTests: XCTestCase {
                 XCTAssertEqual(offset.rows.first, ["21"])
                 let small = try await session.query("SELECT id FROM \(qualified) ORDER BY id LIMIT 2 OFFSET 1200")
                 XCTAssertEqual(small.rows, [["1201"], ["1202"]])
+                let large = try await session.query("SELECT REPEAT('x', 1048576) AS large_value FROM \(qualified) LIMIT 20")
+                XCTAssertTrue(large.isTruncated)
+                XCTAssertLessThanOrEqual(large.retainedBytes, 16 * 1024 * 1024)
+                XCTAssertGreaterThan(large.rows.count, 0)
+                XCTAssertLessThan(large.rows.count, 20)
+                XCTAssertEqual(large.rows.first?.first?.utf8.count, 1048576)
+                let afterBudget = try await session.query("SELECT 123")
+                XCTAssertEqual(afterBudget.rows, [["123"]])
                 let nested = try await session.query("SELECT * FROM (SELECT id FROM \(qualified) LIMIT 3) s")
                 XCTAssertEqual(nested.rows.count, 3)
                 let union = try await session.query("SELECT id FROM \(qualified) UNION ALL SELECT id FROM \(qualified)")

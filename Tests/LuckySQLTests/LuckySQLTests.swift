@@ -154,6 +154,69 @@ final class LuckySQLTests: XCTestCase {
         model.disconnect()
     }
 
+    func testMetadataCacheCoalescesRequestsAndExplicitRefreshInvalidates() async throws {
+        let name = "LuckySQLTests.\(UUID())", defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        let store = WorkspaceStore(defaults: defaults)
+        defer { store.flush(); defaults.removePersistentDomain(forName: name) }
+        let session = StubSession()
+        let model = AppModel(profileStore: ProfileStore(defaults: defaults), keychain: StubPasswordStore(), driver: StubDriver(session: session), workspaceStore: store)
+        model.connect(); try await waitUntil { model.isConnected && !model.isRunning }
+        let table = DatabaseTable(schema: "shop", name: "orders")
+        async let a: Void = model.loadColumns(in: table)
+        async let b: Void = model.loadColumns(in: table)
+        _ = await (a, b)
+        var calls = await session.columnCalls
+        XCTAssertEqual(calls, 1)
+        model.browse(table); try await waitUntil { !model.isRunning }
+        model.refreshData(); try await waitUntil { !model.isRunning }
+        calls = await session.columnCalls; XCTAssertEqual(calls, 1)
+        model.refreshData(forceMetadata: true); try await waitUntil { !model.isRunning }
+        calls = await session.columnCalls; XCTAssertEqual(calls, 2)
+        model.showStructure(); try await waitUntil { !model.isRunning }
+        let count = await session.columnCalls
+        model.changeSection(.query); model.showStructure()
+        calls = await session.columnCalls; XCTAssertEqual(calls, count)
+        model.disconnect()
+    }
+
+    func testReadOnlyBlocksWritesAndGridMutation() async throws {
+        let name = "LuckySQLTests.\(UUID())", defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        let store = WorkspaceStore(defaults: defaults)
+        defer { store.flush(); defaults.removePersistentDomain(forName: name) }
+        let session = StubSession()
+        let model = AppModel(profileStore: ProfileStore(defaults: defaults), keychain: StubPasswordStore(), driver: StubDriver(session: session), workspaceStore: store)
+        model.profiles[0].readOnly = true; model.profiles[0].environment = "Production"
+        model.connect(); try await waitUntil { model.isConnected && !model.isRunning }
+        model.sql = "DELETE FROM orders;"; model.runCurrentQuery()
+        XCTAssertNotNil(model.errorMessage); XCTAssertNil(model.pendingSQL)
+        model.browse(DatabaseTable(schema: "shop", name: "orders")); try await waitUntil { !model.isRunning }
+        XCTAssertFalse(model.canMutateSelectedTable)
+        model.updateCell(row: 0, column: 1, value: "bad"); model.deleteRow(0)
+        let queries = await session.queries()
+        XCTAssertFalse(queries.contains(where: { $0.hasPrefix("DELETE") || $0.hasPrefix("UPDATE") }))
+        XCTAssertTrue(model.connectionLabel.contains("Production")); XCTAssertTrue(model.connectionLabel.contains("READ ONLY"))
+        model.disconnect()
+    }
+
+    func testWorkspacePreviewBudgetReleasesOldResultsNotDrafts() throws {
+        let name = "LuckySQLTests.\(UUID())", defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        let store = WorkspaceStore(defaults: defaults)
+        defer { store.flush(); defaults.removePersistentDomain(forName: name) }
+        let model = AppModel(profileStore: ProfileStore(defaults: defaults), keychain: StubPasswordStore(), driver: StubDriver(session: StubSession()), workspaceStore: store)
+        for index in 0..<6 {
+            model.newQuery(sql: "SELECT \(index)")
+            let result = QueryResult(columns: ["value"], rows: [["test"]], elapsed: .zero, message: "", retainedBytes: 16 * 1024 * 1024)
+            model.queryTabs[model.activeTabIndex].result = result
+            model.queryTabs[model.activeTabIndex].results = [result]
+        }
+        let current = model.result.id, drafts = model.queryTabs.map(\.sql)
+        model.trimResultMemory(preserving: current)
+        XCTAssertEqual(model.result.id, current)
+        XCTAssertEqual(model.queryTabs.map(\.sql), drafts)
+        XCTAssertLessThanOrEqual(model.queryTabs.reduce(0) { $0 + $1.results.reduce(0) { $0 + $1.retainedBytes } }, 64 * 1024 * 1024)
+        XCTAssertNotNil(model.resultBudgetNote)
+    }
+
     private func waitUntil(
         timeoutNanoseconds: UInt64 = 2_000_000_000,
         condition: @escaping @MainActor () -> Bool
@@ -184,6 +247,7 @@ final class LuckySQLTests: XCTestCase {
 }
 
 private actor StubSession: DatabaseSession {
+    var columnCalls = 0
     private var recordedQueries: [String] = []
     func query(_ sql: String) async throws -> QueryResult {
         recordedQueries.append(sql)
@@ -198,7 +262,9 @@ private actor StubSession: DatabaseSession {
         schema == "shop" ? ["customers", "orders"] : []
     }
     func columns(in table: DatabaseTable) async throws -> [TableColumn] {
-        [TableColumn(name: "id", dataType: "bigint", isNullable: false, isPrimaryKey: true, defaultValue: nil, extra: "auto_increment"),
+        columnCalls += 1
+        try await Task.sleep(for: .milliseconds(10))
+        return [TableColumn(name: "id", dataType: "bigint", isNullable: false, isPrimaryKey: true, defaultValue: nil, extra: "auto_increment"),
          TableColumn(name: "status", dataType: "varchar(40)", isNullable: true, isPrimaryKey: false, defaultValue: nil, extra: "")]
     }
     func close() async {}

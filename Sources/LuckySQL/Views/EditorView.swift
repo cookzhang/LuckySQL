@@ -2,7 +2,7 @@ import SwiftUI
 
 struct EditorView: View {
     @EnvironmentObject private var model: AppModel
-    @State private var closingTab: UUID?
+    @State private var rename = ""
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
@@ -11,16 +11,19 @@ struct EditorView: View {
                         ForEach(model.queryTabs) { tab in
                             HStack(spacing: 8) {
                                 Button { model.selectTab(tab.id) } label: {
-                                    Label(tab.title, systemImage: "chevron.left.forwardslash.chevron.right").lineLimit(1)
+                                    Label(tab.title + (tab.isDirty ? " •" : ""), systemImage: "chevron.left.forwardslash.chevron.right").lineLimit(1)
                                 }.buttonStyle(.plain)
                                 Button {
-                                    if tab.sql.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { model.closeTab(tab.id) }
-                                    else { closingTab = tab.id }
+                                    model.requestCloseTab(tab.id)
                                 } label: { Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)) }
                                     .buttonStyle(.plain).disabled(model.isRunning).help("Close query tab")
                             }.padding(.horizontal, 12).frame(height: 34)
                                 .background(tab.id == model.activeTabID ? Color.accentColor.opacity(0.12) : .clear)
                                 .overlay(alignment: .bottom) { if tab.id == model.activeTabID { Color.accentColor.frame(height: 2) } }
+                                .contextMenu {
+                                    Button("Rename Tab…") { rename = tab.title; model.renamingTab = tab.id }
+                                    Button("Close Tab") { model.requestCloseTab(tab.id) }.disabled(model.isRunning)
+                                }
                         }
                     }
                 }
@@ -33,7 +36,7 @@ struct EditorView: View {
                     if !model.selectedDatabase.isEmpty && !model.schemas.contains(where: { $0.name == model.selectedDatabase }) { Text(model.selectedDatabase).tag(model.selectedDatabase) }
                     ForEach(model.schemas) { Text($0.name).tag($0.name) }
                 }.frame(maxWidth: 220).disabled(model.isRunning)
-                Button("Format", systemImage: "text.alignleft") { model.sql = SQLTools.format(model.sql) }.help("Format SQL keywords and clauses")
+                Button("Format", systemImage: "text.alignleft") { model.formatSQL() }.help("Format SQL keywords and clauses")
                 Button("Explain", systemImage: "list.bullet.indent") { model.explainQuery() }.disabled(!model.isConnected || model.isRunning)
                 Menu("Snippets") {
                     Button("SELECT from selected table") { model.insertWhereTemplate() }.disabled(model.selectedTable == nil)
@@ -44,16 +47,23 @@ struct EditorView: View {
                 Button("History", systemImage: "clock.arrow.circlepath") { model.showHistory = true }
             }.controlSize(.small).padding(.horizontal, 12).frame(height: 40)
             Divider()
-            SQLTextEditor(text: $model.sql, selection: $model.sqlSelection, completionCatalog: model.completionCatalog, documentID: model.activeTabID.uuidString)
+            SQLTextEditor(text: $model.sql, selection: $model.sqlSelection, completionCatalog: model.completionCatalog, documentID: model.activeTabID.uuidString, sessions: model.editorSessions) { count in
+                if model.queryTabs[model.activeTabIndex].lineCount != count { model.queryTabs[model.activeTabIndex].lineCount = count }
+            }
             HStack {
                 Text("⌘↩ Run   ⇧⌘↩ All   ⌃Space / ⌥Esc Complete   ⌘F Find")
                 Spacer()
-                Text("Preview ≤ 1,000 rows · \(model.sql.components(separatedBy: "\n").count) lines")
+                Text("Preview ≤ 1,000 rows · \(model.queryTabs[model.activeTabIndex].lineCount) lines")
             }.font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 12).frame(height: 24).background(.bar)
         }
         .task(id: model.selectedDatabase + model.activeTabID.uuidString + String(model.isConnected)) { await model.loadCompletionMetadata() }
-        .confirmationDialog("Close this query tab?", isPresented: Binding(get: { closingTab != nil }, set: { if !$0 { closingTab = nil } })) {
-            Button("Close Tab", role: .destructive) { if let id = closingTab { model.closeTab(id) }; closingTab = nil }
+        .confirmationDialog("Close this query tab?", isPresented: Binding(get: { model.closingTab != nil }, set: { if !$0 { model.closingTab = nil } })) {
+            Button("Close Tab", role: .destructive) { if let id = model.closingTab { model.closeTab(id) }; model.closingTab = nil }
         } message: { Text("Its local draft will be removed. Save it to a SQL file first if you want to keep it.") }
+        .alert("Rename Tab", isPresented: Binding(get: { model.renamingTab != nil }, set: { if !$0 { model.renamingTab = nil } })) {
+            TextField("Tab name", text: $rename)
+            Button("Cancel", role: .cancel) { model.renamingTab = nil }
+            Button("Save") { if let id = model.renamingTab { model.renameTab(id, title: rename) }; model.renamingTab = nil }
+        }
     }
 }

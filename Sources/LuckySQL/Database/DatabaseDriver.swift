@@ -8,13 +8,19 @@ protocol DatabaseSession: AnyObject, Sendable {
     func structure(in table: DatabaseTable) async throws -> TableStructure
     func close() async
     func cancel() async
+    func cancelQuery() async throws
 }
 
 extension DatabaseSession {
     func cancel() async { await close() }
+    func cancelQuery() async throws { throw QueryCancellationUnavailable() }
     func structure(in table: DatabaseTable) async throws -> TableStructure {
         TableStructure(columns: try await columns(in: table))
     }
+}
+
+struct QueryCancellationUnavailable: LocalizedError {
+    var errorDescription: String? { "This server could not cancel the query. Use Stop & Disconnect if necessary; committed writes are not rolled back." }
 }
 
 protocol DatabaseDriver: Sendable {

@@ -16,11 +16,11 @@ DatabaseDriver/Session     engine-neutral async boundary
 
 ### App and views
 
-`AppModel` owns the current profile, session, schema tree, editor text, and query result. All published changes happen on the main actor. Views remain declarative and do not import MySQLNIO.
+`AppModel` owns the current profile, session, schema tree, editor text, and query result. All published changes happen on the main actor. `EditorSessions` retains each tab's native scroll view/text view and private undo manager across SwiftUI view replacement. `SQLAnalysisService` scans on its actor, reuses unchanged token prefixes, caches line offsets and shares analysis with statement-scoped completion. Highlight application touches only the viewport. Views do not import MySQLNIO.
 
 ### Domain
 
-Domain models are deliberately engine-neutral. `QueryResult` is a display-oriented snapshot. `SQLIdentifier.quote` is the only place where dynamically selected MySQL identifiers are interpolated; user-authored editor SQL is sent unchanged.
+Domain models are deliberately engine-neutral. `QueryResult` is a display-oriented snapshot with explicit null locations, truncation and retained-payload accounting. Dynamically selected identifiers/literals are quoted centrally. SQL drafts are unchanged; `SQLPreview` may add/tighten SELECT preview limits before execution.
 
 ### Database port
 
@@ -28,11 +28,13 @@ Domain models are deliberately engine-neutral. `QueryResult` is a display-orient
 
 ### MySQL adapter
 
-`MySQLDriver` owns a single SwiftNIO event-loop group. `MySQLSession` owns the active connection, converts result values to strings for the grid, and implements MySQL metadata queries. MySQLNIO is pure Swift and asynchronous, so UI work never blocks on socket I/O.
+`MySQLDriver` owns a single SwiftNIO event-loop group. `MySQLSession` owns the active connection, converts result values to strings for the grid, and implements MySQL metadata queries. `MySQLCommandQueue` serializes SQL and metadata. Cancellation opens a same-account control connection and sends `KILL QUERY` for the original server connection ID. The active command retains ownership until cancellation finishes, preventing a delayed KILL from reaching the next command. Failure to cancel does not force-close the user's connection. MySQLNIO performs socket I/O asynchronously.
 
 ### Persistence and secrets
 
 Connection profile metadata is Codable and stored in `UserDefaults`. Passwords are keyed by profile UUID and stored separately through the Security framework in Keychain. `PasswordStoring` allows an in-memory fake in tests.
+
+Draft/history JSON serialization uses an ordered background queue with an explicit termination flush. SQL file reads/writes, formatting and result-file encoding/writes run off the main actor with immutable snapshots. Tab IDs guard asynchronous saves against tab switches. Column metadata in-flight requests are coalesced; explicit refresh and successful writes invalidate cached snapshots.
 
 ## Extension seams
 
@@ -40,7 +42,7 @@ Connection profile metadata is Codable and stored in `UserDefaults`. Passwords a
 - **SSH:** establish a local forwarded endpoint before creating a database session. Keep the tunnel handle beside the session and close both together.
 - **Import/export:** stream rows through new cursor/command protocols instead of materializing `QueryResult`.
 - **MCP/Agent:** expose a capability-restricted service above `DatabaseSession`. Default agent execution should be read-only, with explicit approval for mutations.
-- **Large results:** add async row streaming, backpressure, pagination, cancellation, and virtualized AppKit grid rendering.
+- **Large results:** the AppKit grid virtualizes rows; the decoder retains a contiguous 1,000-row / 16 MiB prefix and drains the rest. A 64 MiB workspace preview budget evicts older query results without touching drafts. Future full exports should stream rows with backpressure instead of lifting these guards.
 
 ## Concurrency and lifecycle
 

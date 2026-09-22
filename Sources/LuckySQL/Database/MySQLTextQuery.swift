@@ -10,6 +10,9 @@ final class MySQLTextQuery: MySQLCommand {
 
     private let sql: String
     private let rowLimit: Int?
+    private let byteLimit: Int?
+    private(set) var retainedBytes = 0
+    private(set) var byteLimitReached = false
     private var state = State.ready
     private(set) var columns: [MySQLProtocol.ColumnDefinition41] = []
     private(set) var rows: [MySQLRow] = []
@@ -20,7 +23,7 @@ final class MySQLTextQuery: MySQLCommand {
         return false
     }
 
-    init(_ sql: String, rowLimit: Int? = nil) { self.sql = sql; self.rowLimit = rowLimit }
+    init(_ sql: String, rowLimit: Int? = nil, byteLimit: Int? = nil) { self.sql = sql; self.rowLimit = rowLimit; self.byteLimit = byteLimit }
 
     func activate(capabilities: MySQLProtocol.CapabilityFlags) throws -> MySQLCommandState {
         .init(response: [try .encode(MySQLProtocol.COM_QUERY(query: sql), capabilities: capabilities)])
@@ -67,10 +70,16 @@ final class MySQLTextQuery: MySQLCommand {
                 state = .done
                 return .init(done: true)
             }
+            let bytes = packet.payload.readableBytes
+            // Keep a contiguous prefix, never silently skip an oversized row and
+            // then display later rows. Continue draining to preserve protocol sync.
+            if let byteLimit, bytes > byteLimit - retainedBytes { byteLimitReached = true }
+            if byteLimitReached || (rowLimit != nil && rows.count >= rowLimit!) { rowCount += 1; return .init() }
             let data = try MySQLProtocol.TextResultSetRow.decode(from: &packet, columnCount: columns.count)
             rowCount += 1
             if rowLimit == nil || rows.count < rowLimit! {
                 rows.append(MySQLRow(format: .text, columnDefinitions: columns, values: data.values))
+                retainedBytes += bytes
             }
         case .done:
             throw MySQLError.protocolError
@@ -80,8 +89,8 @@ final class MySQLTextQuery: MySQLCommand {
 }
 
 extension MySQLConnection {
-    func textQuery(_ sql: String, rowLimit: Int? = nil) async throws -> MySQLTextQuery {
-        let command = MySQLTextQuery(sql, rowLimit: rowLimit)
+    func textQuery(_ sql: String, rowLimit: Int? = nil, byteLimit: Int? = nil) async throws -> MySQLTextQuery {
+        let command = MySQLTextQuery(sql, rowLimit: rowLimit, byteLimit: byteLimit)
         // Command state is written only on the connection event loop and read
         // by the caller only after send's completion future has resolved.
         try await send(command, logger: logger).get()
