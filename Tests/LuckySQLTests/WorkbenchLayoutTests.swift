@@ -18,7 +18,7 @@ import XCTest
         model.runCurrentQuery(); try await settle(model)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800), styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
-        let host = NSHostingView(rootView: ConnectionWorkspacesView(workspaces: workspaces).frame(width: 1280, height: 800))
+        let host = NSHostingView(rootView: ConnectionWorkspacesView(workspaces: workspaces).defaultAppStorage(defaults).frame(width: 1280, height: 800))
         window.contentView = host; window.orderFront(nil)
         defer { window.close(); model.disconnect(); model.flushWorkspace(); defaults.removePersistentDomain(forName: suite) }
         let output = URL(fileURLWithPath: folder); try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
@@ -27,7 +27,7 @@ import XCTest
             for section in [WorkspaceSection.query, .data] {
                 if section == .data { model.browse(DatabaseTable(schema: "fixture", name: "same_long_prefix_中文😀_orders")); try await settle(model) }
                 else { model.changeSection(.query) }
-                host.rootView = ConnectionWorkspacesView(workspaces: workspaces).frame(width: size.width, height: size.height)
+                host.rootView = ConnectionWorkspacesView(workspaces: workspaces).defaultAppStorage(defaults).frame(width: size.width, height: size.height)
                 window.setContentSize(size)
                 try await Task.sleep(for: .milliseconds(250)); host.layoutSubtreeIfNeeded(); window.displayIfNeeded()
                 let grids = descendants(CopyableTableView.self, in: host)

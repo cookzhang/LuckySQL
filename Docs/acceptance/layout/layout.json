@@ -1,7 +1,7 @@
 {
   "geometry" : [
     {
-      "grid_rect" : "{{0, 0}, {1022, 309}}",
+      "grid_rect" : "{{0, 0}, {1019, 309}}",
       "grid_visible_columns_including_partial" : 5,
       "grid_visible_rows_including_partial" : 14,
       "height" : 800,
@@ -10,7 +10,7 @@
       "width" : 1280
     },
     {
-      "grid_rect" : "{{0, 0}, {1022, 586.5}}",
+      "grid_rect" : "{{0, 0}, {1019, 586.5}}",
       "grid_visible_columns_including_partial" : 5,
       "grid_visible_rows_including_partial" : 27,
       "height" : 800,
@@ -19,16 +19,16 @@
       "width" : 1280
     },
     {
-      "grid_rect" : "{{0, 0}, {702, 229}}",
+      "grid_rect" : "{{0, 0}, {699, 229}}",
       "grid_visible_columns_including_partial" : 5,
       "grid_visible_rows_including_partial" : 11,
       "height" : 640,
       "section" : "SQL",
-      "sql_line_capacity_estimate" : 13,
+      "sql_line_capacity_estimate" : 12,
       "width" : 960
     },
     {
-      "grid_rect" : "{{0, 0}, {702, 426.5}}",
+      "grid_rect" : "{{0, 0}, {699, 426.5}}",
       "grid_visible_columns_including_partial" : 5,
       "grid_visible_rows_including_partial" : 20,
       "height" : 640,

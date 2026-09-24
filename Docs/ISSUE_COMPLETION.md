@@ -7,13 +7,14 @@ Automated acceptance is complete below. The Mac has been unlocked and most
 packaged UI acceptance has now passed. User feedback required another layout
 revision: the sidebar now spans the workspace, connection tabs live only in the
 detail pane, and SQL/Data/Structure are unified with the native title toolbar.
-The latest validated candidate is `/tmp/luckysql-validated-candidate/LuckySQL.app`.
+The latest validated candidate is `/tmp/luckysql-sidebar-accepted/LuckySQL.app`.
 
-Exact-size native before/after screenshots remain incomplete: computer-use
-window dragging returned `noWindowsAvailable` / `windowNotFoundAtPosition`.
-The user has been asked to resize the window; the Mac subsequently locked again. Actual native screenshots at the
-available sizes were inspected; they are not an equal-size comparison. Do not
-close all issues or publish before the remaining checks finish.
+The sidebar follow-up removes the macOS floating navigation container in favor
+of a flush resizable split, aligns the 34 pt search/connection bars and 28 pt
+footers, and gives SQL tabs/actions 32/38 pt heights. Native resizing now works
+using screenshot-scaled coordinates; approximately 960×640 was inspected with
+all SQL controls visible. Exact-size before/after evidence and the remaining
+error-path smoke check still gate release.
 
 | Issue | Implementation and evidence | Remaining |
 | --- | --- | --- |
@@ -21,7 +22,7 @@ close all issues or publish before the remaining checks finish.
 | #14 | Compact chrome/22 pt rows, persistent SQL font; fixed content-size native geometry checks | Exact-size before/after native screenshots remain; 13→14, view switching and two restarts persisted; restored 13 |
 | #15 | Writes invalidate snapshots, stale/error notices, refresh on return; UPDATE/INSERT/DELETE regressions and live DDL paths passed | Packaged Cmd1/2/3, table context and SQL draft preservation passed |
 | #16 | Operation identity, browse/metadata cancel, command barrier and generation guards; live cancellation/reuse passed | Packaged navigation smoke check passed |
-| #17 | Original-value BINARY null-safe predicates, affected rows, no-op/unknown outcomes; live conflict and batch rollback, Unicode byte distinctions passed | Native field-too-long failure retained input; follow-up enables corrected retry for explicit value rejection. Four-engine live regression passed; new packaged smoke check remains |
+| #17 | Original-value BINARY null-safe predicates, affected rows, no-op/unknown outcomes; live conflict and batch rollback, Unicode byte distinctions passed | Native field-too-long failure retained input; follow-up enables corrected retry for explicit value rejection. Four-engine live regression passed; native rejection retains input with Save enabled; correction/save interrupted by Mac lock |
 | #18 | Column projection, bounded summaries, raw bytes, lazy full value, paged text preview; 20 × 3 MiB native/transport/RSS benchmark passed | Native text and binary full-value loading, byte count, and summary-copy protection passed |
 | #19 | Strict TLS/CA/name/client certificate, SSH key/passphrase/host identity, DNS/TCP/handshake/query deadlines | TLS positives/negatives, SSH positives/negatives, DNS/refused endpoint/auth retry/handshake timeout all passed |
 | #20 | Independent sessions/cancel/cache/drafts; registry restoration; live parallel query, cancel A while B continues, disconnect isolation passed on four engines | Two workspace tabs, independent drafts and registry restoration passed |
@@ -50,7 +51,7 @@ close all issues or publish before the remaining checks finish.
   navigation, explicit accessibility labels, fixed-size mode buttons and export
   selection usability changes. Exact 1280×800 / 960×640 component geometry passed.
   The four-engine matrix was rerun after the final value-rejection fix (118 tests each).
-- Candidate `/tmp/luckysql-validated-candidate/LuckySQL.app` and its v0.4.0 ZIP were
+- Candidate `/tmp/luckysql-sidebar-accepted/LuckySQL.app` and its v0.4.0 ZIP were
   rebuilt; bundle signature and archive SHA-256 verified. This is not a release.
 - Real Keychain: old identity denied (-25293), replacement saved/read, fresh
   process reads the recovered secret; no UI authorization and no ACL weakening.
@@ -118,3 +119,8 @@ documented disposable fixture configuration and passes.
 
 Implementation is committed on `codex/issue-fixes-release`; draft PR #31 tracks
 CI and final acceptance. No release tag has been pushed.
+
+Sidebar follow-up: 31 layout/model/transfer regressions pass, including exact
+1280×800 and 960×640 hosted content geometry. The previous committed revision
+bc6d686 passed both cloud regression tests and optimized compilation. The new
+sidebar revision requires its own CI run. Database behavior is unchanged.

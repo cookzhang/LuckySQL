@@ -19,7 +19,7 @@ struct EditorView: View {
                                     model.requestCloseTab(tab.id)
                                 } label: { Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)) }
                                     .buttonStyle(.plain).disabled(model.isRunning).help("Close query tab")
-                            }.padding(.horizontal, 12).frame(height: 28)
+                            }.padding(.horizontal, 12).frame(height: 32)
                                 .background(tab.id == model.activeTabID ? Color.accentColor.opacity(0.12) : .clear)
                                 .overlay(alignment: .bottom) { if tab.id == model.activeTabID { Color.accentColor.frame(height: 2) } }
                                 .contextMenu {
@@ -62,7 +62,7 @@ struct EditorView: View {
                     Button("Default Size (13)") { fontSize = 13 }
                 }.fixedSize()
                 Button("History", systemImage: "clock.arrow.circlepath") { model.showHistory = true }
-            }.controlSize(.small).padding(.horizontal, 12).frame(height: 32)
+            }.controlSize(.small).padding(.horizontal, 12).frame(height: 38)
             Divider()
             QueryDocumentEditor(model: model, document: model.queryTabs[model.activeTabIndex].document, id: model.activeTabID)
             HStack {

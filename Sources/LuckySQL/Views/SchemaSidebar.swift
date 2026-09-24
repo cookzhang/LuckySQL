@@ -9,52 +9,54 @@ struct SchemaSidebar: View {
     @State private var favoritesOnly = false
 
     var body: some View {
-        List {
-            ForEach(model.profiles) { profile in
-                DisclosureGroup(isExpanded: connectionExpansion(for: profile)) {
-                    connectionContents(for: profile)
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: connectionIcon(for: profile.id))
-                            .foregroundStyle(connectionColor(for: profile.id))
-                        Text(profile.name)
-                            .lineLimit(1)
-                        Spacer()
-                        Button { model.beginEditConnection(profile.id) } label: { Image(systemName: "pencil") }
-                            .buttonStyle(.plain).help("Edit Connection…").disabled(model.isRunning)
-                        if model.connectingProfileID == profile.id {
-                            ProgressView().controlSize(.small)
+        VStack(spacing: 0) {
+            sidebarSearch
+            Divider()
+            List {
+                ForEach(model.profiles) { profile in
+                    DisclosureGroup(isExpanded: connectionExpansion(for: profile)) {
+                        connectionContents(for: profile)
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: connectionIcon(for: profile.id))
+                                .foregroundStyle(connectionColor(for: profile.id))
+                            Text(profile.name)
+                                .lineLimit(1)
+                            Spacer()
+                            Button { model.beginEditConnection(profile.id) } label: { Image(systemName: "pencil") }
+                                .buttonStyle(.plain).help("Edit Connection…").disabled(model.isRunning)
+                            if model.connectingProfileID == profile.id {
+                                ProgressView().controlSize(.small)
+                            }
                         }
                     }
-                }
-                .contextMenu {
-                    Button("Connect") { model.requestConnect(to: profile.id) }.disabled(model.connectedProfileID == profile.id)
-                    Button("Edit Connection…") { model.beginEditConnection(profile.id) }.disabled(model.isRunning)
-                    Divider()
-                    Button("Delete Connection…", role: .destructive) { deletingProfile = profile }.disabled(model.isRunning)
+                    .listRowSeparator(.hidden)
+                    .contextMenu {
+                        Button("Connect") { model.requestConnect(to: profile.id) }.disabled(model.connectedProfileID == profile.id)
+                        Button("Edit Connection…") { model.beginEditConnection(profile.id) }.disabled(model.isRunning)
+                        Divider()
+                        Button("Delete Connection…", role: .destructive) { deletingProfile = profile }.disabled(model.isRunning)
+                    }
                 }
             }
-        }
-        .navigationTitle("Connections")
-        .safeAreaInset(edge: .top) {
-            HStack(spacing: 8) {
-                TextField("Filter loaded tables", text: $search).textFieldStyle(.roundedBorder)
-                Button { favoritesOnly.toggle() } label: { Image(systemName: favoritesOnly ? "star.fill" : "star") }
-                    .buttonStyle(.borderless).foregroundStyle(favoritesOnly ? .orange : .secondary).help("Show favorite tables")
-            }.padding(10).background(.bar)
-        }
-        .safeAreaInset(edge: .bottom) {
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .listRowSeparator(.hidden)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Divider()
             Button {
                 model.beginNewConnection()
             } label: {
-                Label("Add Connection…", systemImage: "plus.circle.fill")
+                Label("Add Connection…", systemImage: "plus.circle")
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
             .disabled(model.isRunning)
-            .padding(10)
-            .background(.bar)
+            .padding(.horizontal, 12)
+            .frame(height: 28)
         }
+        .background(Color(nsColor: .windowBackgroundColor))
         .toolbar {
             ToolbarItem {
                 Button("Refresh", systemImage: "arrow.clockwise") {
@@ -75,6 +77,21 @@ struct SchemaSidebar: View {
         .confirmationDialog("Delete Connection?", isPresented: Binding(get: { deletingProfile != nil }, set: { if !$0 { deletingProfile = nil } })) {
             Button("Delete Connection", role: .destructive) { if let profile = deletingProfile { model.deleteProfile(profile.id) }; deletingProfile = nil }
         } message: { Text("Only the saved connection will be removed. Database data is unchanged.") }
+    }
+
+    private var sidebarSearch: some View {
+        HStack(spacing: 8) {
+            TextField("Filter loaded tables", text: $search)
+                .textFieldStyle(.roundedBorder)
+            Button { favoritesOnly.toggle() } label: {
+                Image(systemName: favoritesOnly ? "star.fill" : "star")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(favoritesOnly ? .orange : .secondary)
+            .help("Show favorite tables")
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 34)
     }
 
     @ViewBuilder
@@ -98,6 +115,7 @@ struct SchemaSidebar: View {
                         tableContents(for: schema)
                     } label: {
                         Label(schema.name, systemImage: "cylinder")
+                            .lineLimit(1).truncationMode(.middle).help(schema.name)
                     }
                 }
             }
@@ -129,6 +147,7 @@ struct SchemaSidebar: View {
                     HStack {
                         Button { model.selectTable(table) } label: {
                             Label(table.name, systemImage: model.isFavorite(table) ? "star.fill" : "tablecells")
+                                .lineLimit(1).truncationMode(.middle)
                                 .foregroundStyle(model.selectedTable == table ? Color.accentColor : .primary)
                         }.buttonStyle(.plain).disabled(model.isRunning).help("Preview \(table.id)")
                         Spacer()

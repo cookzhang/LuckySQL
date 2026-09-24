@@ -3,9 +3,10 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject private var model: AppModel
     var workspaceTabs: AnyView? = nil
+    @State private var sidebarVisible = true
     var body: some View {
-        NavigationSplitView {
-            SchemaSidebar().navigationSplitViewColumnWidth(min: 210, ideal: 250, max: 380)
+        WorkspaceSplitView(sidebarVisible: $sidebarVisible) {
+            SchemaSidebar()
         } detail: {
             VStack(spacing: 0) {
                 if let workspaceTabs { workspaceTabs }
@@ -37,7 +38,15 @@ struct ContentView: View {
             }
         }
         .background(WorkspaceWindowMarker())
+        .navigationTitle("LuckySQL")
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button { sidebarVisible.toggle() } label: {
+                    Image(systemName: "sidebar.left")
+                }
+                .help(LocalizedStringKey(sidebarVisible ? "Hide Sidebar" : "Show Sidebar"))
+                .accessibilityLabel(LocalizedStringKey(sidebarVisible ? "Hide Sidebar" : "Show Sidebar"))
+            }
             ToolbarItem(placement: .principal) {
                 HStack(spacing: 16) {
                     HStack(spacing: 2) {

@@ -70,3 +70,35 @@ The Mac subsequently locked again. Exact-size 1280×800 and 960×640 component
 geometry passes independently, but includes no native title toolbar and cannot
 replace final full-window interaction/screenshots. No release is authorized by
 this incomplete visual sign-off alone.
+
+## Sidebar follow-up (2026-09-24)
+
+Actual screenshots confirmed that the narrow outer strip came from macOS's
+floating NavigationSplitView sidebar container, not just List padding. Replacing
+it with a flush workspace split removes that strip. The search and workspace tabs share a
+34 pt row; both bottom bars share 28 pt. Query tabs and actions are 32/38 pt.
+Plain tree rows avoid the extra inset sidebar panel. The window title remains
+LuckySQL. A dedicated width preference avoids restoring a zero-width frame after
+hiding the sidebar. Width remains draggable within 210–380 pt (default 260 pt).
+
+Screenshot-scaled bottom-right dragging successfully produced an approximately
+962×641 native window. All SQL modes and editor controls remained visible.
+The old v0.3.2 native UI was inspected at 960×692 and a larger available size;
+this does not constitute the remaining exact-size comparison. The 31-test
+layout/model/transfer subset passed after the sizing fix. Native verification passed for dragging 270→285 pt and hiding/showing at 270 pt
+without width loss. At narrow sizes, the preferred width is temporarily capped
+to retain 660 pt for the detail pane. The divider also exposes accessible
+increment/decrement actions.
+
+The latest native check connected to the isolated fixture and expanded the
+connection/database/table tree at approximately 962×641. SQL/Data navigation and
+table context remained visible. Long database/table labels now use one-line
+middle truncation with qualified-name hover help instead of uneven wrapped rows.
+The final source passed all 31 layout/model/transfer regressions; the layout test
+now isolates AppStorage preferences as well as model persistence.
+
+The corrected cell-error path was reached: DATA_TOO_LONG retained the input and
+left Save enabled with the correction message. The Mac locked during the next
+correction/save action, so successful manual retry is not signed off. A direct
+read of the disposable fixture confirmed its original `中文😀 · native batch`
+value remained unchanged. Four-engine automated retry tests already pass.
