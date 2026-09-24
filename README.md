@@ -4,7 +4,7 @@ LuckySQL is a free, open-source, native macOS MySQL workbench built with Swift a
 
 ## Workbench features
 
-- Multiple connection profiles (`host`, `port`, `user`, `password`, default database)
+- Independent connection workspaces, each with its own SQL tabs, session, transactions, results and cancellation; reusable saved profiles
 - Passwords stored in macOS Keychain when silently accessible; no Keychain authorization popups. If storage is unavailable, re-enter the password for the current session only; passwords are never written to UserDefaults
 - Pure-Swift MySQL connection through MySQLNIO; no `libmysqlclient` installation
 - Database/schema/table navigation tree with column types, nullability, and primary-key details
@@ -14,23 +14,23 @@ LuckySQL is a free, open-source, native macOS MySQL workbench built with Swift a
 - Native virtualized result grid with resizable columns, keyboard selection, copying, and full cell previews
 - Table-data workspace with server-side filters, sorting, and 100/200/500-row pagination, without replacing SQL drafts
 - Structure workspace with columns, indexes, foreign keys, comments, and syntax-colored CREATE SQL
-- Primary-key-based cell editing, explicit NULL values, confirmed row deletion, and INSERT SQL drafts
-- CSV/JSON export of the current result/page, TSV copying, favorites, and loaded-table search
+- Optimistic primary-key cell editing and staged typed updates, new rows, TSV paste and reviewed InnoDB batch commits; conflicts roll back the batch
+- Separate preview export and streaming full/filtered table CSV/JSON/SQL data export; mapped CSV import and large UTF-8 SQL scripts with DELIMITER
 - SQL write confirmation, multi-result selection, preview row limits, and stop/disconnect
 - In-app GitHub release checks, SHA-256-verified downloads, confirmed installation with a retained backup, and restart
 - Background edit-range SQL analysis with token-boundary convergence, incremental line numbers, scroll-range coloring reuse, and per-document state isolation
-- Bounded 30-second page cache, conservative integer-primary-key seek pagination, and isolated next-page prefetch; explicit Refresh always fetches current server data
+- Bounded 30-second page cache, composite/nullable seek pagination with safe OFFSET fallback, and reusable isolated next-page prefetch; Refresh fetches current server data
 - Independent per-tab undo/caret/scroll, dirty markers, rename/close/switch shortcuts, and remembered split/column layouts
 - **Command–P** finds tables across all visible databases, including collapsed schemas; recently visited tables appear first
 - **Command–Period** cancels the current SQL through a separate control connection without disconnecting; elapsed time and previous results remain visible
-- Direct in-workspace connection form; no separate Settings window or environment configuration. Existing read-only protections remain effective; English / Simplified Chinese localization is packaged
+- Six-field connection form with collapsible read-only, verified TLS, client-certificate, SSH and timeout options; no separate Settings window or environment tags
 - Clear driver/session boundary for future database engines
 
 ## Requirements
 
 - macOS 14 or newer
 - Xcode 16 or newer (Swift 5.10+ package compatibility)
-- MySQL 5.6+/8+/9 or a compatible MariaDB server
+- MySQL 5.6/5.7/8.x or a compatible MariaDB server (tested with MariaDB 11.4)
 
 Apple Silicon is the primary target. The code has no architecture-specific assumptions and may also build on Intel Macs.
 
@@ -58,13 +58,12 @@ swift test
 swift run LuckySQL
 ```
 
-Swift Package Manager fetches MySQLNIO and its SwiftNIO dependencies automatically. Version `1.8.0` is intentionally pinned: it supports Swift 5.10 and modern MySQL `caching_sha2_password` authentication.
+MySQLNIO 1.8.0 is vendored with narrowly scoped TLS/lifecycle changes documented in [LOCAL_CHANGES](Vendor/mysql-nio/LOCAL_CHANGES.md). Swift Package Manager fetches SwiftNIO dependencies. NIOSSL is pinned to 2.34.1 because strict identity verification uses its additional-verification callback.
 
 LuckySQL uses its own text-result decoder through MySQLNIO's public command API.
 It supports the metadata EOF packet sent by MySQL 5.6 and early 5.7, as well as
 the modern result format negotiated by newer servers. This applies to queries,
-database/table lists, and column metadata. The upstream library still logs its
-5.7 minimum-version warning on 5.6; that warning does not reject the connection.
+database/table lists, and column metadata. The vendored transport version check reflects the tested MySQL 5.6 baseline.
 LuckySQL verifies a query before reporting a connection as successful.
 Connections explicitly set `utf8mb4_general_ci`, since MySQLNIO's handshake
 collation belongs to MySQL 8 and can fall back to a non-UTF-8 charset on older
@@ -85,12 +84,12 @@ The integration test also verifies the 1,000-row server-side limit, smaller expl
 To create a distributable Apple Silicon app bundle locally:
 
 ```sh
-./scripts/package-release.sh 0.3.1
+./scripts/package-release.sh 0.4.0
 ```
 
 The archive and its SHA-256 checksum are written to `dist/`.
 
-> Security note: the MVP currently uses a direct non-TLS MySQL connection. Use it with localhost or a trusted private network. TLS configuration and SSH tunnelling are high-priority roadmap items.
+Enable TLS in Advanced for remote connections. TLS verifies the trust chain and requested server identity and never silently downgrades. SSH uses system OpenSSH, strict known-host verification, an agent/identity file or a Keychain-stored secret. Query deadlines close the session; transaction state is lost and writes are never automatically replayed.
 
 ## Project layout
 
@@ -111,19 +110,21 @@ See the detailed [HeidiSQL comparison and acceptance checklist](Docs/HEIDISQL_PA
 
 ## Current limits
 
-- One active connection; multiple query tabs share it
-- Direct, non-TLS TCP only
-- SQL results retain at most 1,000 rows and 16 MiB of row payload per result. SELECT/CTE/UNION previews add or cap the outer LIMIT, preserve smaller limits and offsets, and leave SQL drafts and write statements unchanged. SHOW/other non-SELECT results have a client-side cap; remaining packets are drained. When a row would exceed the byte budget, that row and all following rows are omitted (never silently shortened). Exports contain only retained rows/current page; partial previews are labeled
-- Older query previews are released above a 64 MiB retained-payload workspace budget; drafts are never evicted. These are data-retention budgets, not hard process-RSS/network limits: protocol packets, strings, metadata, editor state and exports also consume memory. Large cells show a short grid prefix; opening a cell lays out its full retained value on demand
-- Completion uses the current database and referenced tables, loading metadata without requiring a table click; it is not a full SQL scope/type resolver (nested alias shadowing and CTE-derived columns remain unsupported)
-- No streaming full-database import/export or visual schema designer yet
-- Cancel Query uses `KILL QUERY` on a separate same-account connection, with a command barrier to avoid killing the next queued statement. The server may reject/delay cancellation; Stop & Disconnect remains a fallback. Neither option rolls back earlier statements or already committed writes
-- No transaction editing / concurrent-change detection; use a least-privilege account
-- Binary and generated columns are preview-only; tables with binary primary keys cannot be edited through the grid
-- No DELIMITER/routine scripts; at most 100 statements per batch, SQL files up to 2 MB
-- CSV uses display strings; JSON's columns + rows form distinguishes SQL NULL from the text "NULL"
-- Query history (100 entries) and drafts are local and may contain sensitive SQL values; history can be cleared in the UI
-- SQL statements entered by the user execute with the connected account's full privileges
+- Query tabs within one connection workspace share its transaction and temporary tables. Other connection workspaces and migration/batch sessions are independent.
+- Preview results retain at most 1,000 rows and 16 MiB per result, with a 64 MiB workspace retained-payload budget. These are not process-RSS or network caps. Full transfer is a separate streaming path; memory still depends on the largest protocol row/field.
+- Table browsing selects requested columns plus keys, summarizing large fields. Full-value fetch requires a stable primary key and is capped at 16 MiB. Summaries never become write values.
+- Direct edits require usable nonbinary keys. Staged binary edits use raw bytes/hex. Generated columns, stale/truncated snapshots and missing keys remain protected. Batches require InnoDB; unknown COMMIT outcomes require verification before retrying. Pending changes remain in memory on disconnect and are bound to the original connection profile. Closing a workspace or quitting asks before discarding staged changes; grid changes are not persisted across process termination.
+- SQL export contains data INSERT statements, not a complete schema/server backup. JSON preserves columns plus positional rows; binary cells are 0x-prefixed hex strings. CSV uses unquoted \N for SQL NULL, quoted text for literal \N, and hex for binary data.
+- CSV import supports UTF-8/Latin-1, comma/tab/semicolon, multiline quoted fields and field mapping. The entire import uses one InnoDB transaction. SQL scripts follow explicit transaction commands; earlier committed statements and DDL remain after failure. Never blindly replay a partially executed script.
+- The editor opens files up to 2 MB and executes up to 100 statements per batch. Data Transfer executes larger UTF-8 scripts incrementally, with a 16 MiB per-statement bound and DELIMITER support.
+- Completion resolves CTE/derived outputs and nested aliases, but is a tolerant completion parser, not a complete SQL grammar/type checker. Formatting conservatively leaves ambiguous SQL-mode literals unchanged.
+- Schema changes show generated SQL and original definitions. MySQL DDL is not promised to roll back; routine replacement can drop the old object before a failed CREATE. Generated-column expressions use the SQL definition editor.
+- Cancellation uses a same-account control connection and a command barrier. The server may reject/delay it; Stop & Disconnect is a fallback. Earlier committed writes are not rolled back.
+- Drafts and the last 100 history entries stay on the local machine and may contain sensitive values. User SQL executes with all privileges of the server account. Client read-only protection is **not a database permission sandbox**.
+
+The primary form deliberately keeps host, port, user, password, database and name. Advanced exposes read-only protection for new and existing profiles and preserves legacy read-only flags. Connection identity is name plus host/port/database; legacy environment tags remain removed.
+
+Language follows macOS app language preferences. There is no in-app language switch. A previously saved `AppleLanguages` override continues to be honored by macOS; change LuckySQL under System Settings → General → Language & Region → Applications to choose a language. English and Simplified Chinese resources are bundled; newly added advanced workflows currently use English labels where translations are unavailable.
 
 ## Daily-work shortcuts
 
@@ -132,12 +133,13 @@ See the detailed [HeidiSQL comparison and acceptance checklist](Docs/HEIDISQL_PA
 | ⌘T / ⌘W | New / close query tab (unsaved drafts require confirmation) |
 | ⇧⌘[ / ⇧⌘] | Previous / next query tab |
 | ⌘P | Find table across visible databases |
-| ⌘. | Cancel current SQL while retaining the connection |
+| ⌘. | Cancel current SQL, browse or metadata operation |
+| ⌘1 / ⌘2 / ⌘3 | SQL / Data / Structure workspace |
 | ← / → in a result grid | Move the active cell column |
 | ⌘C / ⇧⌘C in a result grid | Copy cell / selected rows in displayed column order |
 | Return / Space in a result grid | Preview full cell value |
 
-Column metadata requests are coalesced and cached, and structure views reuse their last snapshot. Refresh explicitly reloads metadata; successful write statements invalidate caches. Refresh after external schema changes. Read-only protection is a conservative client guard, **not a database permission sandbox**; use a read-only server account for enforcement. Binary/generated columns and incomplete previews cannot be edited through the grid.
+Column metadata requests are coalesced and cached, and structure views reuse their last snapshot. Refresh explicitly reloads metadata; successful write statements invalidate caches. Refresh after external schema changes. Read-only protection is a conservative client guard, **not a database permission sandbox**; use a read-only server account for enforcement. Generated columns and incomplete previews remain protected; the typed batch editor uses raw binary values.
 
 The packaged application includes Chinese localization resources. `swift run` uses the unbundled executable and is intended for development; use the packaging script to verify localized UI.
 

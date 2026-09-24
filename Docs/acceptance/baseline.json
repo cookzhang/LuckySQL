@@ -1,0 +1,5 @@
+{
+  "release": "v0.3.2",
+  "official_archive_sha256": "81d99e084df4217a6ac49bf1ebaa73c7e3daca1cb0249dffb30b0bcc9fcf9e39",
+  "method": "Official release binary; test copy uses separate bundle identifier to isolate preferences. Binary unchanged; plist identifier changed and ad-hoc signed for local UI comparison."
+}

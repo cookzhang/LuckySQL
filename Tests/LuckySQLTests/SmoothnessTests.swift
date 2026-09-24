@@ -29,6 +29,8 @@ final class SmoothnessTests: XCTestCase {
         XCTAssertFalse(emoji.text.contains("�"))
         XCTAssertTrue(emoji.text.hasSuffix("…"))
         XCTAssertEqual(CellDisplayPreview.make("", isNull: true).text, "NULL")
+        XCTAssertEqual(CellDisplayPreview.make("first\r\nsecond\tthird", isNull: false).text, "first ↵ second ⇥ third")
+        XCTAssertEqual(CellDisplayPreview.make("first\nsecond", isNull: false).tooltip, "first\nsecond")
     }
     func testTenThousandTableSearchKeepsRecentOrderAndUnicodeMatching() {
         let tables = (0..<10_000).map { DatabaseTable(schema: "shop", name: "table_\($0)") } + [DatabaseTable(schema: "shop", name: "中文Évents")]
@@ -223,7 +225,8 @@ final class SmoothnessTests: XCTestCase {
         model.connect(); try await waitUntil { !model.isRunning }
         model.profiles[0].host = "edited-but-not-connected.invalid"
         model.browse(DatabaseTable(schema: "shop", name: "orders"))
-        try await waitUntil { await reader.closed > 0 }
+        try await waitUntil { await !reader.queries.isEmpty }
+        try await Task.sleep(for: .milliseconds(20))
         let previewHost = await reader.previewHost
         XCTAssertEqual(previewHost, "127.0.0.1")
         XCTAssertFalse(model.isRunning)

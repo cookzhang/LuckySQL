@@ -1,15 +1,6 @@
 {
-  "originHash" : "07f102d890e822700c7a55413c326943c11e8b7d98bd2d591058daefbd89b913",
+  "originHash" : "f94e2c2e3799a903bebfc59ff211a0a8f0464e564920c74b5c93c3b2c2bfb465",
   "pins" : [
-    {
-      "identity" : "mysql-nio",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/vapor/mysql-nio.git",
-      "state" : {
-        "revision" : "853b43413941a7fc0cfe44ef0ae81b6dd049f8e5",
-        "version" : "1.8.0"
-      }
-    },
     {
       "identity" : "swift-algorithms",
       "kind" : "remoteSourceControl",
@@ -24,8 +15,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-asn1.git",
       "state" : {
-        "revision" : "f70225981241859eb4aa1a18a75531d26637c8cc",
-        "version" : "1.4.0"
+        "revision" : "3b6410f7dee09eb33cdd26260c5fd47fda19b0e2",
+        "version" : "1.7.3"
       }
     },
     {

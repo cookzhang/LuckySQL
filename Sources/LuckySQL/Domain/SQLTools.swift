@@ -105,6 +105,9 @@ enum SQLTools {
     }
 
     static func format(_ sql: String) -> String {
+        // Escaped quotes have different boundaries under NO_BACKSLASH_ESCAPES.
+        // Without an explicit mode, preserve ambiguous SQL verbatim.
+        if sql.contains("\\'") || sql.contains("\\\"") { return sql }
         // Only change keyword case and whitespace; quoted strings and comments
         // are preserved verbatim. Not a full dialect-specific SQL formatter.
         var result = ""

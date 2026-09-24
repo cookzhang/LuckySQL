@@ -61,7 +61,7 @@ final class LuckySQLTests: XCTestCase {
         try await waitUntil { await session.queries().contains(where: { $0.hasPrefix("UPDATE ") }) }
         let recordedQueries = await session.queries()
         let update = try XCTUnwrap(recordedQueries.first(where: { $0.hasPrefix("UPDATE ") }))
-        XCTAssertEqual(update, "UPDATE `shop`.`orders` SET `status` = 'paid' WHERE `id` = '7' LIMIT 1;")
+        XCTAssertEqual(update, "UPDATE `shop`.`orders` SET `status` = 'paid' WHERE BINARY `id` <=> BINARY '7' AND BINARY `status` <=> BINARY 'new' LIMIT 1;")
         model.disconnect()
     }
 
@@ -79,7 +79,7 @@ final class LuckySQLTests: XCTestCase {
         model.updateCell(row: 0, column: 1, value: "NULL")
         try await waitUntil { !model.isRunning }
         let queries = await session.queries()
-        XCTAssertTrue(queries.contains("UPDATE `shop`.`orders` SET `status` = 'NULL' WHERE `id` = '7' LIMIT 1;"))
+        XCTAssertTrue(queries.contains("UPDATE `shop`.`orders` SET `status` = 'NULL' WHERE BINARY `id` <=> BINARY '7' AND BINARY `status` <=> BINARY 'new' LIMIT 1;"))
         XCTAssertTrue(queries.last?.hasPrefix("SELECT * FROM `shop`.`orders`") == true)
         model.disconnect()
     }
@@ -255,7 +255,7 @@ private actor StubSession: DatabaseSession {
         if sql.hasPrefix("SELECT") {
             return QueryResult(columns: ["id", "status"], rows: [["7", "new"]], elapsed: .zero, message: "1 row(s)")
         }
-        return .empty
+        return QueryResult(columns: [], rows: [], elapsed: .zero, message: "1 affected row(s)", affectedRows: 1)
     }
     func queries() -> [String] { recordedQueries }
     func schemas() async throws -> [String] { ["information_schema", "shop"] }

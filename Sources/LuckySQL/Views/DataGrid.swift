@@ -19,7 +19,7 @@ struct DataGrid: NSViewRepresentable {
         let table = CopyableTableView()
         table.clipsToBounds = true
         table.delegate = context.coordinator; table.dataSource = context.coordinator
-        table.rowHeight = 28; table.usesAlternatingRowBackgroundColors = true
+        table.rowHeight = 22; table.usesAlternatingRowBackgroundColors = true
         table.allowsMultipleSelection = true; table.allowsColumnReordering = true
         table.columnAutoresizingStyle = .noColumnAutoresizing
         table.gridStyleMask = [.solidVerticalGridLineMask]
@@ -31,6 +31,7 @@ struct DataGrid: NSViewRepresentable {
         table.setAccessibilityLabel("Database result grid")
         context.coordinator.table = table
         scroll.documentView = table
+        context.coordinator.observeViewport(scroll.contentView)
         context.coordinator.reload()
         if !gridID.isEmpty { table.autosaveName = "LuckySQL.grid.\(gridID)"; table.autosaveTableColumns = true }
         return scroll
@@ -53,6 +54,40 @@ struct DataGrid: NSViewRepresentable {
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
         var parent: DataGrid
         weak var table: NSTableView?
+        private(set) var cellRequests = 0
+        private(set) var visibleCellRequests = 0
+        private var viewportObserver: NSObjectProtocol?
+        private var visibleColumns = IndexSet()
+        private var viewportScheduled = false
+        deinit { if let viewportObserver { NotificationCenter.default.removeObserver(viewportObserver) } }
+        func observeViewport(_ clip: NSClipView) {
+            clip.postsBoundsChangedNotifications = true
+            viewportObserver = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: .main) { [weak self] _ in self?.scheduleViewportRefresh() }
+        }
+        private func scheduleViewportRefresh() {
+            guard !viewportScheduled else { return }; viewportScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }; self.viewportScheduled = false
+                self.refreshVisibleColumns()
+            }
+        }
+        private func columnsInViewport(_ table: NSTableView) -> IndexSet {
+            IndexSet(table.tableColumns.indices.filter { index in
+                let rect = table.rect(ofColumn: index), visible = table.visibleRect
+                return rect.maxX >= visible.minX && rect.minX <= visible.maxX
+            })
+        }
+        private func refreshVisibleColumns() {
+            guard let table else { return }
+            let next = columnsInViewport(table), added = next.subtracting(visibleColumns)
+            visibleColumns = next
+            let rows = table.rows(in: table.visibleRect)
+            if !added.isEmpty, rows.location != NSNotFound, rows.length > 0 {
+                table.reloadData(forRowIndexes: IndexSet(integersIn: rows.location..<min(table.numberOfRows, NSMaxRange(rows))), columnIndexes: added)
+            }
+        }
+        func tableViewColumnDidMove(_ notification: Notification) { table?.headerView?.needsDisplay = true; visibleColumns = []; scheduleViewportRefresh() }
+        func tableViewColumnDidResize(_ notification: Notification) { visibleColumns = []; scheduleViewportRefresh() }
         private var columns: [String] = []
         private var keyIndices: [Int] = []
         private var displayCache: [CellAddress: (text: String, tooltip: String)] = [:]
@@ -64,9 +99,9 @@ struct DataGrid: NSViewRepresentable {
             if Self.offsets.count > 64 { Self.offsets.removeAll() }
             Self.offsets[parent.gridID] = scroll.contentView.bounds.origin
         }
-        func selectedKeys() -> Set<[String]> {
+        func selectedKeys() -> [[String]] {
             guard let table else { return [] }
-            return Set(table.selectedRowIndexes.compactMap { rowKey($0) })
+            return table.selectedRowIndexes.compactMap { rowKey($0) }
         }
         private func rowKey(_ row: Int) -> [String]? {
             guard parent.result.rows.indices.contains(row) else { return nil }
@@ -77,7 +112,7 @@ struct DataGrid: NSViewRepresentable {
                 return [parent.result.isNull(row: row, column: index) ? "null" : "value", parent.result.rows[row][index]]
             }
         }
-        func reload(selection: Set<[String]> = [], changedGrid: Bool = false) {
+        func reload(selection: [[String]] = [], changedGrid: Bool = false) {
             let interval = PerformanceTrace.signposter.beginInterval("Grid reload")
             defer { PerformanceTrace.signposter.endInterval("Grid reload", interval) }
             guard let table else { return }
@@ -97,7 +132,8 @@ struct DataGrid: NSViewRepresentable {
                 }
             }
             table.reloadData()
-            let indices = selection.isEmpty ? [] : parent.result.rows.indices.filter { rowKey($0).map(selection.contains) == true }
+            visibleColumns = columnsInViewport(table)
+            let indices = selection.isEmpty ? [] : parent.result.rows.indices.filter { rowKey($0).map { key in selection.contains { $0 == key } } == true }
             table.selectRowIndexes(IndexSet(indices), byExtendingSelection: false)
             (table as? CopyableTableView)?.activeRow = table.selectedRow
             if let scroll = table.enclosingScrollView {
@@ -108,13 +144,22 @@ struct DataGrid: NSViewRepresentable {
         }
         func numberOfRows(in tableView: NSTableView) -> Int { parent.result.rows.count }
         func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+            cellRequests += 1
             guard let column = tableColumn.flatMap({ Int($0.identifier.rawValue) }), parent.result.rows.indices.contains(row), parent.result.rows[row].indices.contains(column) else { return nil }
+            // NSTableView virtualizes rows but asks for all 40+ columns even
+            // when only a few are visible. Avoid offscreen TextKit cell layout.
+            guard let tableColumn, let displayIndex = tableView.tableColumns.firstIndex(of: tableColumn) else { return nil }
+            let rect = tableView.rect(ofColumn: displayIndex), visible = tableView.visibleRect
+            guard rect.maxX >= visible.minX, rect.minX <= visible.maxX else { return nil }
+            visibleCellRequests += 1
             let identifier = NSUserInterfaceItemIdentifier("cell")
             let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView ?? NSTableCellView()
             if cell.textField == nil {
                 let text = NSTextField(labelWithString: "")
                 text.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
                 text.lineBreakMode = .byTruncatingTail
+                text.maximumNumberOfLines = 1
+                text.usesSingleLineMode = true
                 text.translatesAutoresizingMaskIntoConstraints = false
                 cell.addSubview(text); cell.textField = text; cell.identifier = identifier
                 NSLayoutConstraint.activate([text.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8), text.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8), text.centerYAnchor.constraint(equalTo: cell.centerYAnchor)])
@@ -188,7 +233,10 @@ enum CellDisplayPreview {
             if end > 0, (0xD800...0xDBFF).contains(units[end - 1]) { end -= 1 }
             return String(decoding: units[..<end], as: UTF16.self) + (units.count > limit ? "…" : "")
         }
-        return (isNull ? "NULL" : prefix(512), prefix(1000))
+        let singleLine = prefix(512).replacingOccurrences(of: "\r\n", with: " ↵ ")
+            .replacingOccurrences(of: "\n", with: " ↵ ").replacingOccurrences(of: "\r", with: " ↵ ")
+            .replacingOccurrences(of: "\t", with: " ⇥ ")
+        return (isNull ? "NULL" : singleLine, prefix(1000))
     }
 }
 

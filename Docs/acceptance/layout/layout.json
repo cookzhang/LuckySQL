@@ -1,0 +1,41 @@
+{
+  "geometry" : [
+    {
+      "grid_rect" : "{{0, 0}, {1022, 309}}",
+      "grid_visible_columns_including_partial" : 5,
+      "grid_visible_rows_including_partial" : 14,
+      "height" : 800,
+      "section" : "SQL",
+      "sql_line_capacity_estimate" : 18,
+      "width" : 1280
+    },
+    {
+      "grid_rect" : "{{0, 0}, {1022, 586.5}}",
+      "grid_visible_columns_including_partial" : 5,
+      "grid_visible_rows_including_partial" : 27,
+      "height" : 800,
+      "section" : "Data",
+      "sql_line_capacity_estimate" : 0,
+      "width" : 1280
+    },
+    {
+      "grid_rect" : "{{0, 0}, {702, 229}}",
+      "grid_visible_columns_including_partial" : 5,
+      "grid_visible_rows_including_partial" : 11,
+      "height" : 640,
+      "section" : "SQL",
+      "sql_line_capacity_estimate" : 13,
+      "width" : 960
+    },
+    {
+      "grid_rect" : "{{0, 0}, {702, 426.5}}",
+      "grid_visible_columns_including_partial" : 5,
+      "grid_visible_rows_including_partial" : 20,
+      "height" : 640,
+      "section" : "Data",
+      "sql_line_capacity_estimate" : 0,
+      "width" : 960
+    }
+  ],
+  "method" : "Actual ConnectionWorkspacesView\/ContentView native hosting at exact logical content size, 2x backing; synthetic database session; excludes system title bar. SQL line capacity is geometric, visible grid range can include partial rows\/columns."
+}

@@ -28,7 +28,7 @@ struct SchemaSidebar: View {
                     }
                 }
                 .contextMenu {
-                    Button("Connect") { model.requestConnect(to: profile.id) }.disabled(model.isRunning || model.connectedProfileID == profile.id)
+                    Button("Connect") { model.requestConnect(to: profile.id) }.disabled(model.connectedProfileID == profile.id)
                     Button("Edit Connection…") { model.beginEditConnection(profile.id) }.disabled(model.isRunning)
                     Divider()
                     Button("Delete Connection…", role: .destructive) { deletingProfile = profile }.disabled(model.isRunning)
@@ -127,7 +127,7 @@ struct SchemaSidebar: View {
                     tableStructure(for: table)
                 } label: {
                     HStack {
-                        Button { model.browse(table) } label: {
+                        Button { model.selectTable(table) } label: {
                             Label(table.name, systemImage: model.isFavorite(table) ? "star.fill" : "tablecells")
                                 .foregroundStyle(model.selectedTable == table ? Color.accentColor : .primary)
                         }.buttonStyle(.plain).disabled(model.isRunning).help("Preview \(table.id)")

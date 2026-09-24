@@ -3,7 +3,10 @@
 .swiftpm/
 DerivedData/
 *.xcuserstate
-Vendor/
+Vendor/*
+!Vendor/mysql-nio/
 work/
 outputs/
 dist/
+__pycache__/
+*.py[cod]

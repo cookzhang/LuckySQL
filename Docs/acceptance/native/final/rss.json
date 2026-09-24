@@ -1,0 +1,6 @@
+{
+  "method": "ps RSS of descendant XCTest process, sampled every approximately 50 ms; excludes compiler",
+  "peak_rss_kib": 1205904,
+  "samples": 4452,
+  "exit": 0
+}

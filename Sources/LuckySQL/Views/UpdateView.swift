@@ -2,7 +2,7 @@ import SwiftUI
 
 struct UpdateView: View {
     @ObservedObject var updater: AppUpdater
-    @EnvironmentObject private var model: AppModel
+    @ObservedObject var workspaces: ConnectionWorkspaces
     @State private var confirmInstall = false
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -20,20 +20,21 @@ struct UpdateView: View {
                 Spacer()
                 if updater.busy { Button("Cancel") { updater.cancel() }.disabled(updater.status.hasPrefix("Installing")) }
                 else if updater.installed {
-                    Button("Restart LuckySQL") { updater.restart(model: model) }.disabled(model.isRunning).buttonStyle(.borderedProminent)
+                    Button("Restart LuckySQL") { updater.restart(workspaces: workspaces) }.disabled(workspaces.isBusy || workspaces.hasPendingGridChanges).buttonStyle(.borderedProminent)
                 } else if let app = updater.downloadedApp {
                     Button("Reveal Download") { NSWorkspace.shared.activateFileViewerSelecting([app]) }
-                    Button("Install Update…") { confirmInstall = true }.disabled(model.isRunning).buttonStyle(.borderedProminent)
+                    Button("Install Update…") { confirmInstall = true }.disabled(workspaces.isBusy || workspaces.hasPendingGridChanges).buttonStyle(.borderedProminent)
                 } else if updater.release != nil {
                     Button("Download Update") { updater.download() }.buttonStyle(.borderedProminent)
                 } else { Button("Check Again") { updater.check() } }
                 Button("Close") { updater.isPresented = false }.disabled(updater.busy)
             }
-            if model.isRunning { Text("Wait for the active database operation to finish before installing or restarting.").font(.caption) }
+            if workspaces.hasPendingGridChanges { Text("Commit or discard pending table changes in every workspace before installing or restarting.").font(.caption) }
+            if workspaces.isBusy { Text("Wait for the active database operation to finish before installing or restarting.").font(.caption) }
         }.padding(24).frame(width: 640)
             .interactiveDismissDisabled(updater.busy)
             .confirmationDialog("Install this update?", isPresented: $confirmInstall) {
-                Button("Install Verified Update") { updater.install(model: model) }
+                Button("Install Verified Update") { updater.install(workspaces: workspaces) }
             } message: { Text("Your current app will be replaced, with a backup retained beside it. SQL drafts are saved first. Restart when installation finishes.") }
     }
 }

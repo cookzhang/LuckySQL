@@ -1,0 +1,37 @@
+{
+  "fixtures": "isolated Docker tmpfs; max_allowed_packet=64 MiB; log_bin_trust_function_creators=1",
+  "results": [
+    {
+      "engine": "mysql-5.6",
+      "test_count": 117,
+      "skipped": 9,
+      "failures": 0,
+      "seconds": 21.489,
+      "version": "5.6.51"
+    },
+    {
+      "engine": "mysql-5.7",
+      "test_count": 117,
+      "skipped": 9,
+      "failures": 0,
+      "seconds": 22.087,
+      "version": "5.7.44"
+    },
+    {
+      "engine": "mysql-8.4",
+      "test_count": 117,
+      "skipped": 8,
+      "failures": 0,
+      "seconds": 22.192,
+      "version": "8.4.11"
+    },
+    {
+      "engine": "mariadb-11.4",
+      "test_count": 117,
+      "skipped": 9,
+      "failures": 0,
+      "seconds": 21.546,
+      "version": "11.4.13-MariaDB-ubu2404"
+    }
+  ]
+}

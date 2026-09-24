@@ -14,6 +14,8 @@ final class MySQLTextQuery: MySQLCommand {
     private(set) var retainedBytes = 0
     private(set) var byteLimitReached = false
     private var state = State.ready
+    private let rowConsumer: ((MySQLRow) throws -> Void)?
+    private var consumerError: Error?
     private(set) var columns: [MySQLProtocol.ColumnDefinition41] = []
     private(set) var rows: [MySQLRow] = []
     private(set) var rowCount = 0
@@ -23,7 +25,7 @@ final class MySQLTextQuery: MySQLCommand {
         return false
     }
 
-    init(_ sql: String, rowLimit: Int? = nil, byteLimit: Int? = nil) { self.sql = sql; self.rowLimit = rowLimit; self.byteLimit = byteLimit }
+    init(_ sql: String, rowLimit: Int? = nil, byteLimit: Int? = nil, rowConsumer: ((MySQLRow) throws -> Void)? = nil) { self.sql = sql; self.rowLimit = rowLimit; self.byteLimit = byteLimit; self.rowConsumer = rowConsumer }
 
     func activate(capabilities: MySQLProtocol.CapabilityFlags) throws -> MySQLCommandState {
         .init(response: [try .encode(MySQLProtocol.COM_QUERY(query: sql), capabilities: capabilities)])
@@ -42,7 +44,7 @@ final class MySQLTextQuery: MySQLCommand {
             if packet.isOK {
                 affectedRows = try packet.decode(MySQLProtocol.OK_Packet.self, capabilities: capabilities).affectedRows
                 state = .done
-                return .init(done: true)
+                return .init(done: true, error: consumerError)
             }
             let response = try packet.decode(MySQLProtocol.COM_QUERY_Response.self, capabilities: capabilities)
             guard response.columnCount > 0 else { throw MySQLError.protocolError }
@@ -68,7 +70,16 @@ final class MySQLTextQuery: MySQLCommand {
                     guard packet.payload.readableBytes == 5 else { throw MySQLError.protocolError }
                 }
                 state = .done
-                return .init(done: true)
+                return .init(done: true, error: consumerError)
+            }
+            if let rowConsumer {
+                rowCount += 1
+                if consumerError == nil {
+                    let data = try MySQLProtocol.TextResultSetRow.decode(from: &packet, columnCount: columns.count)
+                    do { try rowConsumer(MySQLRow(format: .text, columnDefinitions: columns, values: data.values)) }
+                    catch { consumerError = error }
+                }
+                return .init()
             }
             let bytes = packet.payload.readableBytes
             // Keep a contiguous prefix, never silently skip an oversized row and
@@ -89,8 +100,8 @@ final class MySQLTextQuery: MySQLCommand {
 }
 
 extension MySQLConnection {
-    func textQuery(_ sql: String, rowLimit: Int? = nil, byteLimit: Int? = nil) async throws -> MySQLTextQuery {
-        let command = MySQLTextQuery(sql, rowLimit: rowLimit, byteLimit: byteLimit)
+    func textQuery(_ sql: String, rowLimit: Int? = nil, byteLimit: Int? = nil, rowConsumer: ((MySQLRow) throws -> Void)? = nil) async throws -> MySQLTextQuery {
+        let command = MySQLTextQuery(sql, rowLimit: rowLimit, byteLimit: byteLimit, rowConsumer: rowConsumer)
         // Command state is written only on the connection event loop and read
         // by the caller only after send's completion future has resolved.
         try await send(command, logger: logger).get()

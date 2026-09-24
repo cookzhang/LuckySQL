@@ -38,7 +38,7 @@ struct AppRelease: Decodable {
               asset.browser_download_url.scheme == "https", asset.browser_download_url.host == "github.com",
               asset.browser_download_url.path == "/cookzhang/LuckySQL/releases/download/\(tag_name)/\(name)",
               let digest = asset.digest, digest.hasPrefix("sha256:"), digest.count == 71,
-              digest.dropFirst(7).allSatisfy({ $0.isHexDigit }) else {
+              digest.dropFirst(7).allSatisfy({ "0123456789abcdefABCDEF".contains($0) }) else {
             throw UpdateFailure("This release has no compatible, SHA-256-verified Apple Silicon package.")
         }
         return asset
@@ -63,9 +63,43 @@ actor UpdateService {
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("LuckySQL-Updater", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await session.data(for: request)
-        try Self.checkHTTP(response)
+        if let http = response as? HTTPURLResponse, [403, 429].contains(http.statusCode) {
+            do { return try await latestFromReleasePage() }
+            catch { throw UpdateFailure("Update check HTTP \(http.statusCode); GitHub Releases fallback failed: \(error.localizedDescription)") }
+        }
+        try Self.checkHTTP(response, stage: "Update check")
         guard data.count < 2_000_000 else { throw UpdateFailure("Release metadata is too large.") }
         return try JSONDecoder().decode(AppRelease.self, from: data)
+    }
+
+    /// Uses only canonical GitHub release URLs; the checksum remains mandatory.
+    func latestFromReleasePage() async throws -> AppRelease {
+        let page = URL(string: "https://github.com/cookzhang/LuckySQL/releases/latest")!
+        let (_, response) = try await session.data(for: URLRequest(url: page, timeoutInterval: 30))
+        try Self.checkHTTP(response, stage: "Release page")
+        guard let url = response.url, url.scheme == "https", url.host == "github.com",
+              url.path == "/cookzhang/LuckySQL/releases/tag/" + url.lastPathComponent else { throw UpdateFailure("Unexpected release page redirect.") }
+        let tag = url.lastPathComponent
+        guard tag.hasPrefix("v"), ReleaseVersion(tag) != nil else { throw UpdateFailure("Invalid stable release tag.") }
+        let name = "LuckySQL-\(tag)-macos-arm64.zip"
+        let archive = URL(string: "https://github.com/cookzhang/LuckySQL/releases/download/\(tag)/\(name)")!
+        let (checksum, checksumResponse) = try await session.data(for: URLRequest(url: archive.appendingPathExtension("sha256"), timeoutInterval: 30))
+        try Self.checkHTTP(checksumResponse, stage: "Release checksum")
+        let digest = try Self.parseChecksum(checksum, filename: name)
+        var head = URLRequest(url: archive, timeoutInterval: 30); head.httpMethod = "HEAD"
+        let (_, archiveResponse) = try await session.data(for: head)
+        try Self.checkHTTP(archiveResponse, stage: "Package metadata")
+        let size = archiveResponse.expectedContentLength
+        guard size > 0, size <= 100_000_000 else { throw UpdateFailure("Invalid update package size.") }
+        return AppRelease(tag_name: tag, html_url: url, body: "Verified through GitHub Releases because the API is rate limited.", draft: false, prerelease: false,
+                          assets: [.init(name: name, browser_download_url: archive, size: Int(size), digest: "sha256:" + digest)])
+    }
+    static func parseChecksum(_ data: Data, filename: String) throws -> String {
+        guard data.count < 4096, let text = String(data: data, encoding: .utf8) else { throw UpdateFailure("Invalid checksum file.") }
+        let fields = text.split(whereSeparator: \.isWhitespace)
+        guard fields.count == 2, fields[0].count == 64, fields[0].allSatisfy({ "0123456789abcdefABCDEF".contains($0) }),
+              fields[1] == filename || fields[1] == "*" + filename else { throw UpdateFailure("Checksum does not identify the update package.") }
+        return fields[0].lowercased()
     }
 
     func download(_ asset: AppRelease.Asset, version: String) async throws -> URL {
@@ -182,9 +216,9 @@ actor UpdateService {
         guard process.terminationStatus == 0 else { throw UpdateFailure("Update validation failed (\(URL(fileURLWithPath: executable).lastPathComponent)). \(String(decoding: data.prefix(2_000), as: UTF8.self))") }
         return String(decoding: data, as: UTF8.self)
     }
-    private static func checkHTTP(_ response: URLResponse) throws {
+    static func checkHTTP(_ response: URLResponse, stage: String = "Package download") throws {
         guard let response = response as? HTTPURLResponse, response.statusCode == 200,
-              response.url?.scheme == "https" else { throw UpdateFailure("Unable to download update. Check the network or try again later (GitHub may be rate limiting requests).") }
+              response.url?.scheme == "https" else { throw UpdateFailure("\(stage) failed (HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0))." + ((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After").map { " Retry after: \($0)." } ?? "")) }
     }
 }
 
@@ -201,7 +235,7 @@ final class AppUpdater: ObservableObject {
     private var task: Task<Void, Never>?
     private let service: UpdateService
     let currentVersion: String
-    init(service: UpdateService = UpdateService(), currentVersion: String = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.3.1") {
+    init(service: UpdateService = UpdateService(), currentVersion: String = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.4.0") {
         self.service = service; self.currentVersion = currentVersion
     }
     func check() {
@@ -238,9 +272,9 @@ final class AppUpdater: ObservableObject {
         }
     }
     func cancel() { task?.cancel() }
-    func install(model: AppModel) {
-        guard !busy, !model.isRunning, let downloadedApp, let release else { return }
-        model.saveWorkspace()
+    func install(workspaces: ConnectionWorkspaces) {
+        guard !busy, !workspaces.isBusy, !workspaces.hasPendingGridChanges, let downloadedApp, let release else { return }
+        workspaces.flush()
         busy = true; error = nil; status = "Installing verified update…"
         task = Task {
             defer { busy = false }
@@ -251,9 +285,9 @@ final class AppUpdater: ObservableObject {
             } catch { self.error = error.localizedDescription; status = "Installation failed. You can retry or reveal the verified download." }
         }
     }
-    func restart(model: AppModel) {
-        guard installed, !model.isRunning else { return }
-        model.saveWorkspace(); model.disconnect()
+    func restart(workspaces: ConnectionWorkspaces) {
+        guard installed, !workspaces.isBusy, !workspaces.hasPendingGridChanges else { return }
+        workspaces.flush(); for entry in workspaces.entries { entry.model.disconnect() }
         do {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/sh")

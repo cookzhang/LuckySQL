@@ -14,16 +14,24 @@ actor MySQLCommandQueue {
     init(connection: MySQLConnection, connectionID: UInt64, controlConnection: @escaping @Sendable () async throws -> MySQLConnection) {
         self.connection = connection; self.connectionID = connectionID; self.controlConnection = controlConnection
     }
-    func query(_ sql: String, rowLimit: Int? = nil, byteLimit: Int? = nil) async throws -> MySQLTextQuery {
+    func query(_ sql: String, rowLimit: Int? = nil, byteLimit: Int? = nil, timeout: Int = 0, rowConsumer: (@Sendable (MySQLRow) throws -> Void)? = nil) async throws -> MySQLTextQuery {
         let previous = tail
         let task = Task {
             await previous?.value
             self.activeID = UUID()
+            let deadline = timeout > 0 ? self.connection.eventLoop.scheduleTask(in: .seconds(Int64(timeout))) {
+                self.connection.channel.close(promise: nil)
+            } : nil
+            defer { deadline?.cancel() }
             do {
-                let value = try await self.connection.textQuery(sql, rowLimit: rowLimit, byteLimit: byteLimit)
+                let value = try await self.connection.textQuery(sql, rowLimit: rowLimit, byteLimit: byteLimit, rowConsumer: rowConsumer)
                 await self.finish()
                 return value
-            } catch { await self.finish(); throw error }
+            } catch {
+                await self.finish()
+                if self.connection.isClosed { throw DatabaseSessionLost() }
+                throw error
+            }
         }
         tail = Task { _ = try? await task.value }
         return try await task.value
