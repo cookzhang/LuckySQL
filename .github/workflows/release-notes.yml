@@ -1,0 +1,35 @@
+name: Sync release notes
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'Docs/releases/v*.md'
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Update notes for published releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --name-only --diff-filter=AM "$BEFORE" "$AFTER" -- 'Docs/releases/v*.md' | while IFS= read -r notes; do
+            tag="$(basename "$notes" .md)"
+            releases="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[].tag_name')"
+            if ! grep -Fxq -- "$tag" <<< "$releases"; then
+              echo "No published release for $tag; skipping."
+              continue
+            fi
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --notes-file "$notes"
+          done
