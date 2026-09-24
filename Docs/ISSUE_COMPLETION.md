@@ -3,26 +3,25 @@
 Updated 2026-09-24. The user requires one release after all functionality and
 acceptance are complete. **Release remains pending; no version tag has been pushed.**
 
-Automated acceptance is complete below. The Mac has been unlocked and most
-packaged UI acceptance has now passed. User feedback required another layout
-revision: the sidebar now spans the workspace, connection tabs live only in the
-detail pane, and SQL/Data/Structure are unified with the native title toolbar.
-The latest validated candidate is `/tmp/luckysql-sidebar-accepted/LuckySQL.app`.
+Implementation and automated/native acceptance are complete. The latest code
+revision 03c5c25 passed cloud regression tests and optimized compilation. Final
+acceptance notes and release assets are verified separately from code CI.
+The packaged candidate is `/tmp/luckysql-sidebar-accepted/LuckySQL.app`.
 
-The sidebar follow-up removes the macOS floating navigation container in favor
-of a flush resizable split, aligns the 34 pt search/connection bars and 28 pt
-footers, and gives SQL tabs/actions 32/38 pt heights. Native resizing now works
-using screenshot-scaled coordinates; approximately 960×640 was inspected with
-all SQL controls visible. Exact-size before/after evidence and the remaining
-error-path smoke check still gate release.
+The sidebar is flush, resizable and preserves preferred width through visibility
+changes. SQL/Data/Structure are unified with the native toolbar. Exact 1280×800
+before/after and 960×692 paired-minimum native screenshots were inspected; the
+old binary cannot shrink below 960×692 including chrome. The new binary also
+passed exact 960×640 interaction checks. See `acceptance/native-ui.md` for counts,
+comparison boundaries and the successful rejected-value/corrected-retry check.
 
 | Issue | Implementation and evidence | Remaining |
 | --- | --- | --- |
 | #13 | Canonical Releases fallback for API 403/429, mandatory SHA-256, stage errors; mocked HTTP cases and real release download/verification passed | Update dialog passed (0.4.0 up to date); verify published assets after release |
-| #14 | Compact chrome/22 pt rows, persistent SQL font; fixed content-size native geometry checks | Exact-size before/after native screenshots remain; 13→14, view switching and two restarts persisted; restored 13 |
+| #14 | Compact chrome/22 pt rows, persistent SQL font; fixed content-size native geometry checks | Native paired windows and new 960×640 passed; font persistence passed |
 | #15 | Writes invalidate snapshots, stale/error notices, refresh on return; UPDATE/INSERT/DELETE regressions and live DDL paths passed | Packaged Cmd1/2/3, table context and SQL draft preservation passed |
 | #16 | Operation identity, browse/metadata cancel, command barrier and generation guards; live cancellation/reuse passed | Packaged navigation smoke check passed |
-| #17 | Original-value BINARY null-safe predicates, affected rows, no-op/unknown outcomes; live conflict and batch rollback, Unicode byte distinctions passed | Native field-too-long failure retained input; follow-up enables corrected retry for explicit value rejection. Four-engine live regression passed; native rejection retains input with Save enabled; correction/save interrupted by Mac lock |
+| #17 | Original-value BINARY null-safe predicates, affected rows, no-op/unknown outcomes; live conflict and batch rollback, Unicode byte distinctions passed | Native rejected-value/corrected-save succeeded; original fixture value restored; four-engine live regression passed |
 | #18 | Column projection, bounded summaries, raw bytes, lazy full value, paged text preview; 20 × 3 MiB native/transport/RSS benchmark passed | Native text and binary full-value loading, byte count, and summary-copy protection passed |
 | #19 | Strict TLS/CA/name/client certificate, SSH key/passphrase/host identity, DNS/TCP/handshake/query deadlines | TLS positives/negatives, SSH positives/negatives, DNS/refused endpoint/auth retry/handshake timeout all passed |
 | #20 | Independent sessions/cancel/cache/drafts; registry restoration; live parallel query, cancel A while B continues, disconnect isolation passed on four engines | Two workspace tabs, independent drafts and registry restoration passed |
@@ -31,10 +30,10 @@ error-path smoke check still gate release.
 | #23 | Streaming CSV/JSON/SQL data export, mapped transactional CSV and bounded DELIMITER scripts; >1,000 rows, >2 MB, Unicode/binary, multi-batch failure and cancellation passed | CSV Unicode/multiline/hex preview and auto-mapping passed; export list now shows current database first, checkboxes, filter and selected count |
 | #24 | CTE/derived/nested scope completion, typed server-bound parameters, mode-safe formatter; unit and live UInt64 tests passed | Native completion popup and bound Chinese/emoji parameter execution passed |
 | #25 | Composite/NULL seek, prefix filter, reusable idle prefetch; 30-sample 0/50/150 ms RTT distributions, EXPLAIN, cache expiry and stale-prefetch checks passed | None |
-| #26 | Actual native input/highlight/drawing distributions, wide first screen, RSS, network counts; measured offscreen-column optimization | No HeidiSQL comparison or speed-equivalence claim; native tab/scroll checks passed, exact-size comparison remains |
+| #26 | Actual native input/highlight/drawing distributions, wide first screen, RSS, network counts; measured offscreen-column optimization | Native tab/scroll and fixed-window comparison passed; no HeidiSQL speed-equivalence claim |
 | #27 | Advanced read-only toggle, accurate endpoint snapshot and explicit language policy; live read-only change/isolation passed | Advanced TLS/SSH/timeouts/read-only controls displayed correctly |
 | #28 | Umbrella | Close only when every child is accepted |
-| #29 | Nearby Run/cancel, shortcuts, preserved context, pending/applied filters and persistent errors; model/native geometry tests passed | Final native minimum-size/navigation/error matrix |
+| #29 | Nearby Run/cancel, shortcuts, preserved context, pending/applied filters and persistent errors; model/native geometry tests passed | Native 960×640 SQL/Data/Structure, keyboard preview, pagination and corrected retry passed |
 | #30 | Inaccessible Keychain record rotation, verify-before-publishing UUID, no plaintext defaults | Real separately signed recovery passed twice; packaged candidate connected without password on two restarts (subsequent changes only navigation/export UI) |
 
 ## Automated results
@@ -117,10 +116,15 @@ Application deployment remains macOS 14. A UI-fixture-only broad test attempt
 also lacked routine-creation privileges; the complete fresh matrix uses the
 documented disposable fixture configuration and passes.
 
-Implementation is committed on `codex/issue-fixes-release`; draft PR #31 tracks
-CI and final acceptance. No release tag has been pushed.
+Implementation is committed on `codex/issue-fixes-release`; PR #31 tracks
+CI and release. No release tag has been pushed.
 
 Sidebar follow-up: 31 layout/model/transfer regressions pass, including exact
 1280×800 and 960×640 hosted content geometry. The previous committed revision
 bc6d686 passed both cloud regression tests and optimized compilation. The new
 sidebar revision requires its own CI run. Database behavior is unchanged.
+
+Final native acceptance completed on the packaged build: explicit value rejection,
+corrected manual save and fixture restoration; paired fixed-size windows and
+960×640 SQL/Data/Structure interactions. The code CI run 36008808905 passed.
+The final documentation-only commit is checked again by CI before merge.
