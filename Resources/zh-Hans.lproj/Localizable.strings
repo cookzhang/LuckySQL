@@ -181,3 +181,7 @@
 "Hide Sidebar" = "隐藏边栏";
 "Show Sidebar" = "显示边栏";
 "Sidebar Width" = "边栏宽度";
+
+"Expand Results" = "展开查询结果";
+"Restore SQL Editor" = "恢复 SQL 编辑器";
+"SQL Editor Height" = "SQL 编辑器高度";
