@@ -177,3 +177,7 @@
 "READ ONLY" = "只读";
 "Executing statement %ld/%ld · previous result retained until ready" = "执行语句 %ld/%ld · 返回新结果前保留上次结果";
 "Rows exceed the preview budget — select fewer or smaller columns" = "行数据超出预览预算 — 请查询更少或更小的列";
+
+"Hide Sidebar" = "隐藏边栏";
+"Show Sidebar" = "显示边栏";
+"Sidebar Width" = "边栏宽度";

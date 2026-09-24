@@ -2,6 +2,7 @@ import Foundation
 
 protocol DatabaseSession: AnyObject, Sendable {
     func query(_ sql: String) async throws -> QueryResult
+    func export(_ sql: String, to url: URL, format: TransferFormat, progress: @escaping @Sendable (Int) -> Void) async throws -> Int
     func schemas() async throws -> [String]
     func tables(in schema: String) async throws -> [String]
     func columns(in table: DatabaseTable) async throws -> [TableColumn]
@@ -12,6 +13,7 @@ protocol DatabaseSession: AnyObject, Sendable {
 }
 
 extension DatabaseSession {
+    func export(_ sql: String, to url: URL, format: TransferFormat, progress: @escaping @Sendable (Int) -> Void) async throws -> Int { throw UpdateFailure("This driver does not support streaming export.") }
     func cancel() async { await close() }
     func cancelQuery() async throws { throw QueryCancellationUnavailable() }
     func structure(in table: DatabaseTable) async throws -> TableStructure {
@@ -24,10 +26,16 @@ struct QueryCancellationUnavailable: LocalizedError {
 }
 
 protocol DatabaseDriver: Sendable {
+    func connect(profile: ConnectionProfile, password: String, sshPassword: String) async throws -> any DatabaseSession
     func connect(profile: ConnectionProfile, password: String) async throws -> any DatabaseSession
     func connectPreview(profile: ConnectionProfile, password: String) async throws -> (any DatabaseSession)?
 }
 
 extension DatabaseDriver {
+    func connect(profile: ConnectionProfile, password: String, sshPassword: String) async throws -> any DatabaseSession { try await connect(profile: profile, password: password) }
     func connectPreview(profile: ConnectionProfile, password: String) async throws -> (any DatabaseSession)? { nil }
+}
+
+struct DatabaseSessionLost: LocalizedError {
+    var errorDescription: String? { "The database connection closed or timed out. Transaction/session state was lost; drafts are preserved. A sent write may have committed. Reconnect and verify before retrying; no writes were replayed." }
 }

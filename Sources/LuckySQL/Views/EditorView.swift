@@ -2,6 +2,8 @@ import SwiftUI
 
 struct EditorView: View {
     @EnvironmentObject private var model: AppModel
+    @AppStorage("sqlFontSize") private var fontSize = 13.0
+    @State private var parametersSQL: String?
     @State private var rename = ""
     var body: some View {
         VStack(spacing: 0) {
@@ -17,7 +19,7 @@ struct EditorView: View {
                                     model.requestCloseTab(tab.id)
                                 } label: { Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)) }
                                     .buttonStyle(.plain).disabled(model.isRunning).help("Close query tab")
-                            }.padding(.horizontal, 12).frame(height: 34)
+                            }.padding(.horizontal, 12).frame(height: 32)
                                 .background(tab.id == model.activeTabID ? Color.accentColor.opacity(0.12) : .clear)
                                 .overlay(alignment: .bottom) { if tab.id == model.activeTabID { Color.accentColor.frame(height: 2) } }
                                 .contextMenu {
@@ -30,7 +32,17 @@ struct EditorView: View {
                 Button { model.newQuery() } label: { Image(systemName: "plus") }.buttonStyle(.borderless).padding(.horizontal, 12).help("New query (⌘T)")
             }.background(.bar)
             Divider()
-            HStack(spacing: 12) {
+            HStack(spacing: 8) {
+                if model.canCancelOperation {
+                    Button("Cancel", systemImage: "stop.circle") { model.cancelCurrentQuery() }
+                } else {
+                    Menu {
+                        Button("Run Selection / Current Statement") { model.runCurrentQuery() }
+                        Button("Run with Parameters…") { parametersSQL = SQLTools.executable(model.sql, selection: model.sqlSelection) }
+                        Button("Run All Statements") { model.runCurrentQuery(all: true) }
+                    } label: { Label("Run", systemImage: "play.fill") }
+                    .fixedSize().disabled(!model.isConnected || model.isRunning)
+                }
                 Picker("Database", selection: $model.selectedDatabase) {
                     Text("No database").tag("")
                     if !model.selectedDatabase.isEmpty && !model.schemas.contains(where: { $0.name == model.selectedDatabase }) { Text(model.selectedDatabase).tag(model.selectedDatabase) }
@@ -44,15 +56,23 @@ struct EditorView: View {
                     Button("New table template") { model.newQuery(sql: "CREATE TABLE `new_table` (\n  `id` BIGINT NOT NULL AUTO_INCREMENT,\n  `name` VARCHAR(255) NOT NULL,\n  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  PRIMARY KEY (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;", title: "Create table") }
                 }.fixedSize()
                 Spacer()
+                Menu("Text") {
+                    Button("Larger SQL Text") { fontSize = min(24, fontSize + 1) }
+                    Button("Smaller SQL Text") { fontSize = max(10, fontSize - 1) }
+                    Button("Default Size (13)") { fontSize = 13 }
+                }.fixedSize()
                 Button("History", systemImage: "clock.arrow.circlepath") { model.showHistory = true }
-            }.controlSize(.small).padding(.horizontal, 12).frame(height: 40)
+            }.controlSize(.small).padding(.horizontal, 12).frame(height: 38)
             Divider()
             QueryDocumentEditor(model: model, document: model.queryTabs[model.activeTabIndex].document, id: model.activeTabID)
             HStack {
                 Text("⌘↩ Run   ⇧⌘↩ All   ⌃Space / ⌥Esc Complete   ⌘F Find")
                 Spacer()
                 QueryLineCount(document: model.queryTabs[model.activeTabIndex].document)
-            }.font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 12).frame(height: 24).background(.bar)
+            }.font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 12).frame(height: 18).background(.bar)
+        }
+        .sheet(isPresented: Binding(get: { parametersSQL != nil }, set: { if !$0 { parametersSQL = nil } })) {
+            if let source = parametersSQL { ParameterEditorView(source: source).environmentObject(model) }
         }
         .task(id: model.selectedDatabase + model.activeTabID.uuidString + String(model.isConnected)) { await model.loadCompletionMetadata() }
         .confirmationDialog("Close this query tab?", isPresented: Binding(get: { model.closingTab != nil }, set: { if !$0 { model.closingTab = nil } })) {

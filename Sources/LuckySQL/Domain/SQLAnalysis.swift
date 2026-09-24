@@ -66,11 +66,11 @@ actor SQLAnalysisService {
         // Cancelled requests can wait in the actor mailbox while an earlier
         // large document is scanned. Discard them before doing more CPU work.
         guard !Task.isCancelled else { return SQLAnalysis(sql: sql, tokens: [], lineStarts: [0]) }
-        if let cached = cache[document], cached.sql == sql { return cached }
+        if let cached = cache[document], (cached.sql as NSString).isEqual(to: sql) { return cached }
         var tokens: [SQLToken], lines: [Int], scanned = 0
         if let old = cache[document] {
             let edit: SQLTextEdit
-            if let hint, hint.original == old.sql,
+            if let hint, (hint.original as NSString).isEqual(to: old.sql),
                hint.range.location >= 0, NSMaxRange(hint.range) <= (old.sql as NSString).length,
                (old.sql as NSString).length - hint.range.length + hint.replacementLength == (sql as NSString).length {
                 edit = hint

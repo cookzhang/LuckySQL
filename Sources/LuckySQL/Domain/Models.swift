@@ -9,8 +9,29 @@ struct ConnectionProfile: Identifiable, Codable, Hashable, Sendable {
     var username = "root"
     var database = ""
     var readOnly: Bool?
+    var tls: TLSOptions?
+    var ssh: SSHOptions?
+    var connectTimeout: Int?
+    var queryTimeout: Int?
 
     static let local = ConnectionProfile()
+}
+
+struct TLSOptions: Codable, Hashable, Sendable {
+    var enabled = false
+    var caFile = ""
+    var serverName = ""
+    var certificateFile = ""
+    var privateKeyFile = ""
+}
+struct SSHOptions: Codable, Hashable, Sendable {
+    var secretID = UUID()
+    var enabled = false
+    var host = ""
+    var port = 22
+    var username = ""
+    var identityFile = ""
+    var knownHostsFile = ""
 }
 
 struct DatabaseSchema: Identifiable, Hashable, Sendable {
@@ -53,6 +74,9 @@ struct QueryResult: Sendable {
     var nullCells: Set<CellAddress> = []
     var isTruncated = false
     var retainedBytes = 0
+    var affectedRows: UInt64? = nil
+    var deferredColumns: Set<String> = []
+    var binaryCells: [CellAddress: Data] = [:]
 
     func isNull(row: Int, column: Int) -> Bool { nullCells.contains(CellAddress(row: row, column: column)) }
 
@@ -147,7 +171,7 @@ struct TableStructure: Sendable {
 }
 
 enum FilterOperator: String, CaseIterable {
-    case equals = "=", notEquals = "≠", contains = "contains", greater = ">", less = "<", isNull = "IS NULL", isNotNull = "IS NOT NULL"
+    case equals = "=", notEquals = "≠", contains = "contains", prefix = "prefix", greater = ">", less = "<", isNull = "IS NULL", isNotNull = "IS NOT NULL"
     var needsValue: Bool { self != .isNull && self != .isNotNull }
 }
 
@@ -159,9 +183,10 @@ struct TableBrowseOptions: Hashable, Sendable {
     var filterValue = ""
     var sortColumn = ""
     var descending = false
+    var selectedColumns: Set<String> = []
 
-    func query(for table: DatabaseTable, primaryKeys: [String], afterPrimaryKey: String? = nil) throws -> String {
-        var sql = "SELECT * FROM \(try SQLIdentifier.quote(table.schema)).\(try SQLIdentifier.quote(table.name))"
+    func query(for table: DatabaseTable, primaryKeys: [String], afterPrimaryKey: String? = nil, projection: String = "*", seekPredicate: String? = nil) throws -> String {
+        var sql = "SELECT \(projection) FROM \(try SQLIdentifier.quote(table.schema)).\(try SQLIdentifier.quote(table.name))"
         if !filterColumn.isEmpty {
             let column = try SQLIdentifier.quote(filterColumn)
             let value = try SQLStringLiteral.quote(filterValue)
@@ -169,6 +194,9 @@ struct TableBrowseOptions: Hashable, Sendable {
             case .equals: sql += " WHERE \(column) = \(value)"
             case .notEquals: sql += " WHERE \(column) <> \(value)"
             case .contains: sql += " WHERE LOCATE(\(value), \(column)) > 0"
+            case .prefix:
+                let pattern = filterValue.replacingOccurrences(of: "!", with: "!!").replacingOccurrences(of: "%", with: "!%").replacingOccurrences(of: "_", with: "!_") + "%"
+                sql += " WHERE \(column) LIKE \(try SQLStringLiteral.quote(pattern)) ESCAPE '!'"
             case .greater: sql += " WHERE \(column) > \(value)"
             case .less: sql += " WHERE \(column) < \(value)"
             case .isNull: sql += " WHERE \(column) IS NULL"
@@ -185,12 +213,15 @@ struct TableBrowseOptions: Hashable, Sendable {
             sql += filterColumn.isEmpty ? " WHERE " : " AND "
             sql += "\(try SQLIdentifier.quote(primaryKeys[0])) \(descending ? "<" : ">") \(afterPrimaryKey)"
         }
+        if let seekPredicate {
+            sql += (filterColumn.isEmpty ? " WHERE " : " AND ") + seekPredicate
+        }
         var ordering = sortColumn.isEmpty ? [] : [sortColumn]
         ordering += primaryKeys.filter { !ordering.contains($0) }
         if !ordering.isEmpty {
             sql += " ORDER BY " + (try ordering.map { try SQLIdentifier.quote($0) + (descending ? " DESC" : " ASC") }.joined(separator: ", "))
         }
-        return sql + " LIMIT \(pageSize + 1)" + (seek ? ";" : " OFFSET \(max(0, page) * pageSize);")
+        return sql + " LIMIT \(pageSize + 1)" + (seek || seekPredicate != nil ? ";" : " OFFSET \(max(0, page) * pageSize);")
     }
 }
 

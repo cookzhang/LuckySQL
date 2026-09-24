@@ -29,6 +29,8 @@ mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 
 install -m 755 "$BINARY_PATH" "$APP_DIR/Contents/MacOS/$APP_NAME"
 install -m 644 "$REPO_ROOT/LICENSE" "$APP_DIR/Contents/Resources/LICENSE"
+mkdir -p "$APP_DIR/Contents/Resources/ThirdPartyLicenses"
+install -m 644 "$REPO_ROOT/Vendor/mysql-nio/LICENSE" "$APP_DIR/Contents/Resources/ThirdPartyLicenses/mysql-nio.txt"
 install -m 644 "$REPO_ROOT/Resources/AppIcon/LuckySQL.icns" "$APP_DIR/Contents/Resources/LuckySQL.icns"
 ditto "$REPO_ROOT/Resources/zh-Hans.lproj" "$APP_DIR/Contents/Resources/zh-Hans.lproj"
 

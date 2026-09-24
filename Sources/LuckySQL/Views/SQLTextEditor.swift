@@ -3,6 +3,7 @@ import SwiftUI
 
 struct SQLTextEditor: NSViewRepresentable {
     @Binding var text: String
+    @AppStorage("sqlFontSize") private var fontSize = 13.0
     var selection: Binding<NSRange> = .constant(NSRange(location: 0, length: 0))
     var completionCatalog = SQLCompletionCatalog()
     var isEditable = true
@@ -41,7 +42,7 @@ struct SQLTextEditor: NSViewRepresentable {
         editor.textContainer?.containerSize = NSSize(width: 1_000_000, height: CGFloat.greatestFiniteMagnitude)
         editor.textContainer?.widthTracksTextView = false
         editor.textContainerInset = NSSize(width: 12, height: 12)
-        editor.font = .monospacedSystemFont(ofSize: 14, weight: .regular)
+        editor.font = .monospacedSystemFont(ofSize: min(24, max(10, fontSize)), weight: .regular)
         editor.backgroundColor = .textBackgroundColor; editor.textColor = .textColor
         editor.insertionPointColor = .controlAccentColor
         editor.setAccessibilityLabel(isEditable ? "SQL editor" : "SQL preview")
@@ -86,10 +87,15 @@ struct SQLTextEditor: NSViewRepresentable {
         editor.completionCatalog = completionCatalog
         editor.analysisID = documentID
         editor.isEditable = isEditable
+        let size = CGFloat(min(24, max(10, fontSize)))
+        if editor.font?.pointSize != size {
+            editor.font = .monospacedSystemFont(ofSize: size, weight: .regular)
+            scroll.verticalRulerView?.needsDisplay = true
+        }
         if editor.hasMarkedText() { return }
         coordinator.updating = true
         defer { coordinator.updating = false }
-        if editor.string != text || coordinator.documentID != documentID {
+        if !(editor.string as NSString).isEqual(to: text) || coordinator.documentID != documentID {
             let changedDocument = coordinator.documentID != documentID
             if changedDocument {
                 editor.dismissCompletions()
@@ -146,7 +152,7 @@ struct SQLTextEditor: NSViewRepresentable {
                 try? await Task.sleep(for: .milliseconds(80))
                 guard !Task.isCancelled else { return }
                 let analysis = await SQLAnalysisService.shared.analyze(source, document: id, edit: edit)
-                guard !Task.isCancelled, let self, self.documentID == id, let editor, editor.string == source else { return }
+                guard !Task.isCancelled, let self, self.documentID == id, let editor, (editor.string as NSString).isEqual(to: source) else { return }
                 if let code = editor as? CodeTextView {
                     code.analysis = analysis
                     code.colorVisibleText()
@@ -227,7 +233,7 @@ final class CodeTextView: NSTextView {
     func colorVisibleText() {
         let interval = PerformanceTrace.signposter.beginInterval("Visible highlight")
         defer { PerformanceTrace.signposter.endInterval("Visible highlight", interval) }
-        guard !hasMarkedText(), let analysis, analysis.sql == string, let layout = layoutManager, let container = textContainer else { return }
+        guard !hasMarkedText(), let analysis, (analysis.sql as NSString).isEqual(to: string), let layout = layoutManager, let container = textContainer else { return }
         let glyphs = layout.glyphRange(forBoundingRect: visibleRect.insetBy(dx: 0, dy: -300), in: container)
         let range = layout.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
         let previous = paintedRange

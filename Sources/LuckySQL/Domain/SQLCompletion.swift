@@ -65,11 +65,15 @@ enum SQLCompletion {
         let referenceSQL = quoted && !hasClosingQuote ? ns.replacingCharacters(in: NSRange(location: caret, length: 0), with: "`") : sql
         let statement = SQLTools.executable(referenceSQL, selection: NSRange(location: caret, length: 0))
         let refs = references(statement, database: catalog.database)
+        let statementOffset = SQLTools.statements(referenceSQL).first { caret < NSMaxRange($0.range) }?.range.location ?? 0
+        let scoped = SQLScope(sql: statement, catalog: catalog).sources(at: caret - statementOffset)
         var names: [String] = []
         var keywords: [String] = []
         if afterDot, left.count >= 2 {
             let qualifier = unquote(left[left.count - 2].text)
-            if let schema = catalog.schemas.first(where: { $0.name.caseInsensitiveCompare(qualifier) == .orderedSame }) {
+            if let source = scoped.first(where: { !$0.columns.isEmpty && $0.alias.caseInsensitiveCompare(qualifier) == .orderedSame }) {
+                names = source.columns.map(\.name)
+            } else if let schema = catalog.schemas.first(where: { $0.name.caseInsensitiveCompare(qualifier) == .orderedSame }) {
                 names = schema.tables.map(\.name)
             } else {
                 let matching = refs.filter { ($0.alias ?? $0.table.name).caseInsensitiveCompare(qualifier) == .orderedSame }
@@ -83,7 +87,7 @@ enum SQLCompletion {
             let tableContext = ["FROM", "JOIN", "UPDATE", "INTO"].contains(left.last?.text.uppercased() ?? "")
             names = catalog.schemas.map(\.name) + catalog.schemas.filter { catalog.database.isEmpty || $0.name == catalog.database }.flatMap { $0.tables.map(\.name) }
             if !tableContext {
-                names += refs.flatMap { catalog.columns[$0.table.id, default: []].map(\.name) }
+                names += scoped.flatMap { $0.columns.map(\.name) }
                 keywords = Array(SQLTools.keywords)
             }
         }
@@ -103,6 +107,8 @@ enum SQLCompletion {
             if words.contains(candidate) { details[candidate] = "SQL keyword" }
             else if catalog.schemas.contains(where: { $0.name == name }) { details[candidate] = "Database" }
             else if let table = catalog.schemas.flatMap(\.tables).first(where: { $0.name == name }) { details[candidate] = table.schema + " · table" }
+            else if let source = scoped.first(where: { $0.columns.contains(where: { $0.name == name }) }),
+                    let column = source.columns.first(where: { $0.name == name }) { details[candidate] = source.label + " · " + column.dataType }
             else if let ref = refs.first(where: { catalog.columns[$0.table.id, default: []].contains(where: { $0.name == name }) }),
                     let column = catalog.columns[ref.table.id]?.first(where: { $0.name == name }) { details[candidate] = ref.table.name + " · " + column.dataType }
         }

@@ -3,6 +3,7 @@ import SwiftUI
 struct ConnectionEditorView: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var draft: ConnectionDraft
+    @State private var showAdvanced = false
     @FocusState private var focused: Field?
     private enum Field { case host, password }
 
@@ -18,9 +19,11 @@ struct ConnectionEditorView: View {
                 TextField("Database (optional)", text: $draft.profile.database)
                 TextField("Name (optional)", text: $draft.profile.name)
             }.textFieldStyle(.roundedBorder).disabled(model.isRunning)
-            if draft.profile.readOnly == true {
-                Label("This saved connection is read-only.", systemImage: "lock.fill").font(.caption).foregroundStyle(.secondary)
-            }
+            ScrollView { DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
+                RemoteConnectionOptionsView(draft: draft)
+                Toggle("Read-only protection", isOn: Binding(get: { draft.profile.readOnly == true }, set: { draft.profile.readOnly = $0 }))
+                Text("Client protection does not replace database account permissions.").font(.caption).foregroundStyle(.secondary)
+            }.disabled(model.isRunning) }.frame(height: showAdvanced ? 300 : 24)
             if draft.isLoadingPassword {
                 HStack { ProgressView().controlSize(.small); Text("Loading saved password…").font(.caption) }
             } else if let notice = draft.notice {

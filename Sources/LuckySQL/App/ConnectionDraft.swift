@@ -8,6 +8,7 @@ import Combine
     @Published var profile: ConnectionProfile
     @Published var port: String
     @Published var password: String { didSet { passwordRevision += 1 } }
+    @Published var sshPassword = ""
     @Published var isLoadingPassword = false
     @Published var notice: String?
     @Published var error: String?
@@ -29,6 +30,11 @@ import Combine
         guard !text.isEmpty, text.utf8.allSatisfy({ (48...57).contains($0) }), let number = Int(text), (1...65535).contains(number) else { throw InvalidConnection("Port must be between 1 and 65535.") }
         guard !value.username.isEmpty, !value.username.contains("\0") else { throw InvalidConnection("Enter a username.") }
         guard !value.database.contains("\0") else { throw InvalidConnection("Enter a valid database name.") }
+        if let ssh = value.ssh, ssh.enabled {
+            guard !ssh.host.isEmpty, !ssh.host.hasPrefix("-"), !ssh.host.contains(where: { $0.isWhitespace }), !ssh.username.isEmpty,
+                  (1...65535).contains(ssh.port) else { throw InvalidConnection("Enter a valid SSH host, port and user.") }
+        }
+        guard (1...300).contains(value.connectTimeout ?? 30), (0...86400).contains(value.queryTimeout ?? 0) else { throw InvalidConnection("Connection timeout: 1–300 seconds. Query timeout: 0–86400 seconds (0 disables it).") }
         value.port = number
         if value.name.isEmpty { value.name = "\(value.username)@\(value.host)" }
         return value
