@@ -3,35 +3,36 @@
   "results": [
     {
       "engine": "mysql-5.6",
-      "test_count": 117,
+      "test_count": 118,
       "skipped": 9,
       "failures": 0,
-      "seconds": 21.489,
+      "seconds": 23.378,
       "version": "5.6.51"
     },
     {
       "engine": "mysql-5.7",
-      "test_count": 117,
+      "test_count": 118,
       "skipped": 9,
       "failures": 0,
-      "seconds": 22.087,
+      "seconds": 22.617,
       "version": "5.7.44"
     },
     {
       "engine": "mysql-8.4",
-      "test_count": 117,
+      "test_count": 118,
       "skipped": 8,
       "failures": 0,
-      "seconds": 22.192,
+      "seconds": 22.361,
       "version": "8.4.11"
     },
     {
       "engine": "mariadb-11.4",
-      "test_count": 117,
+      "test_count": 118,
       "skipped": 9,
       "failures": 0,
-      "seconds": 21.546,
+      "seconds": 21.763,
       "version": "11.4.13-MariaDB-ubu2404"
     }
-  ]
+  ],
+  "value_rejection": "All engines: strict-session too-long value rejected without changing stored value; original editor snapshot remains available for a corrected manual retry; optimistic conflict detection retained."
 }

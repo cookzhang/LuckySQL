@@ -834,10 +834,15 @@ final class AppModel: ObservableObject {
                 if epoch == connectionAttemptID { acceptBrowseResult(result); browseIsStale = false }
             } catch {
                 if epoch == connectionAttemptID {
-                    mutationNotice = written
-                        ? "Write succeeded, but refresh failed. Do not repeat the write. " + error.localizedDescription
-                        : "Write failed or its outcome is unknown. Refresh and verify before retrying. " + error.localizedDescription
-                    browseIsStale = true
+                    let rejectedValue = !written && MySQLDriver.isCorrectableValueRejection(error)
+                    if written {
+                        mutationNotice = "Write succeeded, but refresh failed. Do not repeat the write. " + error.localizedDescription
+                    } else if rejectedValue {
+                        mutationNotice = "Server rejected this value. Your input is retained; correct it and save again. " + error.localizedDescription
+                    } else {
+                        mutationNotice = "Write failed or its outcome is unknown. Refresh and verify before retrying. " + error.localizedDescription
+                    }
+                    browseIsStale = !rejectedValue
                     if error is DatabaseSessionLost { show(error) }
                 }
             }

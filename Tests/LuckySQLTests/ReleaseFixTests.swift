@@ -97,6 +97,18 @@ final class ReleaseFixTests: XCTestCase {
         XCTAssertFalse(model.mutationSucceeded); XCTAssertTrue(model.browseIsStale)
         let sql = await session.lastWrite; XCTAssertTrue(sql.contains("BINARY `value` <=> BINARY 'old'"))
     }
+    @MainActor func testUnknownWriteOutcomeStillBlocksManualReplay() async throws {
+        let (model, session, defaults, name) = try fixture()
+        defer { defaults.removePersistentDomain(forName: name); model.disconnect() }
+        model.connect(); try await settle(model)
+        model.browse(DatabaseTable(schema: "test", name: "t")); try await settle(model)
+        await session.setFail(true)
+        model.updateCell(row: 0, column: 1, value: "new"); try await settle(model)
+        XCTAssertFalse(model.mutationSucceeded)
+        XCTAssertTrue(model.browseIsStale)
+        XCTAssertFalse(model.canEditColumn(1))
+        XCTAssertTrue(model.mutationNotice?.contains("outcome is unknown") == true)
+    }
     @MainActor func testCanonicalUnicodeDifferenceIsStillARealEdit() async throws {
         let (model, _, defaults, name) = try fixture()
         defer { defaults.removePersistentDomain(forName: name); model.disconnect() }

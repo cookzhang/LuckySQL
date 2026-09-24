@@ -10,6 +10,17 @@ final class MySQLDriver: DatabaseDriver, @unchecked Sendable {
     private var group: MultiThreadedEventLoopGroup { runtime.group }
     init() {}
 
+    /// A received value/constraint rejection is different from losing the
+    /// connection after sending a write. A user may correct it and resubmit;
+    /// the original-value predicate still protects against concurrent changes.
+    static func isCorrectableValueRejection(_ error: Error) -> Bool {
+        guard let mysql = error as? MySQLError, case .server(let packet) = mysql else { return false }
+        let codes: [MySQLProtocol.ErrorCode] = [.BAD_NULL_ERROR, .DUP_ENTRY, .DUP_ENTRY_WITH_KEY_NAME,
+            .WARN_DATA_OUT_OF_RANGE, .TRUNCATED_WRONG_VALUE_FOR_FIELD, .DATA_TOO_LONG,
+            .NO_REFERENCED_ROW, .NO_REFERENCED_ROW_2]
+        return codes.contains(packet.errorCode)
+    }
+
     func connectPreview(profile: ConnectionProfile, password: String) async throws -> (any DatabaseSession)? {
         try await connect(profile: profile, password: password)
     }
