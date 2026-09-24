@@ -146,3 +146,5 @@ The packaged application includes Chinese localization resources. `swift run` us
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+构建工具链：使用 Xcode 16.4 或更新版本（依赖 SwiftASN1 需要 Swift 6.1）。CI 与发布流程统一选择 macOS 15 / Xcode 16.4；应用最低运行系统仍为 macOS 14。
