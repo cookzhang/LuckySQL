@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct ResultGrid: View {
+    var resultsExpanded: Binding<Bool>? = nil
     @EnvironmentObject private var model: AppModel
     @State private var preview: CellPreview?
     @State private var pendingDelete: Int?
@@ -17,6 +18,16 @@ struct ResultGrid: View {
                     }.fixedSize()
                 }
                 Spacer()
+                if let resultsExpanded {
+                    Button {
+                        resultsExpanded.wrappedValue.toggle()
+                    } label: {
+                        Image(systemName: resultsExpanded.wrappedValue ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                    }
+                    .buttonStyle(.borderless)
+                    .help(LocalizedStringKey(resultsExpanded.wrappedValue ? "Restore SQL Editor" : "Expand Results"))
+                    .accessibilityLabel(LocalizedStringKey(resultsExpanded.wrappedValue ? "Restore SQL Editor" : "Expand Results"))
+                }
                 Text("\(result.message) · \(result.elapsed.formatted(.units(allowed: [.seconds, .milliseconds], width: .abbreviated)))")
                     .font(.caption).foregroundStyle(.secondary)
                 Menu {
@@ -51,6 +62,7 @@ struct ResultGrid: View {
             }
             if result.columns.isEmpty {
                 ContentUnavailableView(model.isRunning ? "Running query…" : "Ready to query", systemImage: "terminal", description: Text("Run SQL or select a table in the sidebar to preview its data."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 DataGrid(result: result, gridID: "\(model.connectedProfileID?.uuidString ?? "local")/\(model.section == .data ? model.selectedTable?.id ?? "" : model.activeTabID.uuidString)",
                          primaryKeys: model.section == .data ? model.tableColumns[model.selectedTable?.id ?? "", default: []].filter(\.isPrimaryKey).map(\.name) : [], inspect: { row, column in

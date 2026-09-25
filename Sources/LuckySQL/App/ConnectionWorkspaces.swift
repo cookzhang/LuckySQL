@@ -95,7 +95,6 @@ struct ConnectionWorkspacesView: View {
         .confirmationDialog("Discard staged changes and close workspace?", isPresented: Binding(get: { pendingClose != nil }, set: { if !$0 { pendingClose = nil } })) {
             Button("Discard and Close", role: .destructive) { if let id = pendingClose { workspaces.close(id) }; pendingClose = nil }
         } message: { Text("SQL drafts are saved. Uncommitted grid changes in this workspace will be discarded.") }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in workspaces.flush() }
     }
 
     private var workspaceTabs: some View {

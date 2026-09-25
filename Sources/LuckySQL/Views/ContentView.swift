@@ -12,11 +12,8 @@ struct ContentView: View {
                 if let workspaceTabs { workspaceTabs }
                 switch model.section {
                 case .query:
-                    VSplitView {
-                        EditorView().frame(minHeight: 190, idealHeight: 290)
-                        ResultGrid().frame(minHeight: 170)
-                    }
-                    .background(SplitLayoutPersistence())
+                    QueryWorkspaceView()
+                        .background(SplitLayoutPersistence())
                 case .data: TableBrowserView()
                 case .structure: StructureView()
                 }
@@ -103,7 +100,6 @@ struct ContentView: View {
                 HStack { Spacer(); Button("Cancel") { model.cancelExecution() }.keyboardShortcut(.cancelAction); Button("Execute SQL") { model.confirmExecution() }.buttonStyle(.borderedProminent) }
             }.padding(24).frame(width: 700)
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in model.flushWorkspace() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in model.saveWorkspace() }
     }
 
