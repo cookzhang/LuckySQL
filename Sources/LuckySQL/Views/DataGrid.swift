@@ -12,39 +12,41 @@ struct DataGrid: NSViewRepresentable {
     var quickFilter: ((Int, Int) -> Void)?
     var delete: ((Int) -> Void)?
     func makeCoordinator() -> Coordinator { Coordinator(self) }
-    func makeNSView(context: Context) -> NSScrollView {
+    func makeNSView(context: Context) -> NSScrollView { makeScroll(coordinator: context.coordinator) }
+    func makeScroll(coordinator: Coordinator) -> NSScrollView {
         let scroll = NSScrollView()
         scroll.clipsToBounds = true; scroll.contentView.clipsToBounds = true
         scroll.hasHorizontalScroller = true; scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
         let table = CopyableTableView()
         table.clipsToBounds = true
-        table.delegate = context.coordinator; table.dataSource = context.coordinator
+        table.delegate = coordinator; table.dataSource = coordinator
         table.rowHeight = 22; table.usesAlternatingRowBackgroundColors = true
         table.allowsMultipleSelection = true; table.allowsColumnReordering = true
         table.columnAutoresizingStyle = .noColumnAutoresizing
         table.gridStyleMask = [.solidVerticalGridLineMask]
-        table.target = context.coordinator; table.doubleAction = #selector(Coordinator.preview)
-        table.copyRows = { [weak coordinator = context.coordinator] in coordinator?.copyRows() }
-        table.copyCell = { [weak coordinator = context.coordinator] in coordinator?.copyValue() }
-        table.previewCell = { [weak coordinator = context.coordinator] in coordinator?.preview() }
-        let menu = NSMenu(); menu.delegate = context.coordinator; table.menu = menu
+        table.target = coordinator; table.doubleAction = #selector(Coordinator.preview)
+        table.copyRows = { [weak coordinator] in coordinator?.copyRows() }
+        table.copyCell = { [weak coordinator] in coordinator?.copyValue() }
+        table.previewCell = { [weak coordinator] in coordinator?.preview() }
+        let menu = NSMenu(); menu.delegate = coordinator; table.menu = menu
         table.setAccessibilityLabel("Database result grid")
-        context.coordinator.table = table
+        coordinator.table = table
         scroll.documentView = table
-        context.coordinator.observeViewport(scroll.contentView)
-        context.coordinator.reload()
+        coordinator.observeViewport(scroll.contentView)
+        coordinator.reload()
         if !gridID.isEmpty { table.autosaveName = "LuckySQL.grid.\(gridID)"; table.autosaveTableColumns = true }
         return scroll
     }
-    func updateNSView(_ nsView: NSScrollView, context: Context) {
-        let old = context.coordinator.parent.result
+    func updateNSView(_ nsView: NSScrollView, context: Context) { updateScroll(coordinator: context.coordinator) }
+    func updateScroll(coordinator: Coordinator) {
+        let old = coordinator.parent.result
         let changed = old.id != result.id
-        let changedGrid = context.coordinator.parent.gridID != gridID
-        let selected = changed && !changedGrid ? context.coordinator.selectedKeys() : []
-        if changedGrid { context.coordinator.rememberScroll() }
-        context.coordinator.parent = self
-        if changed || changedGrid { context.coordinator.reload(selection: changedGrid ? [] : selected, changedGrid: changedGrid) }
-        if changedGrid, let table = context.coordinator.table {
+        let changedGrid = coordinator.parent.gridID != gridID
+        let selected = changed && !changedGrid ? coordinator.selectedKeys() : []
+        if changedGrid { coordinator.rememberScroll() }
+        coordinator.parent = self
+        if changed || changedGrid { coordinator.reload(selection: changedGrid ? [] : selected, changedGrid: changedGrid) }
+        if changedGrid, let table = coordinator.table {
             table.autosaveTableColumns = false
             table.autosaveName = gridID.isEmpty ? nil : "LuckySQL.grid.\(gridID)"
             table.autosaveTableColumns = !gridID.isEmpty
@@ -54,6 +56,7 @@ struct DataGrid: NSViewRepresentable {
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
         var parent: DataGrid
         weak var table: NSTableView?
+        private(set) var reloadCount = 0
         private(set) var cellRequests = 0
         private(set) var visibleCellRequests = 0
         private var viewportObserver: NSObjectProtocol?
@@ -116,6 +119,7 @@ struct DataGrid: NSViewRepresentable {
             let interval = PerformanceTrace.signposter.beginInterval("Grid reload")
             defer { PerformanceTrace.signposter.endInterval("Grid reload", interval) }
             guard let table else { return }
+            reloadCount += 1
             displayCache.removeAll(keepingCapacity: true)
             keyIndices = parent.primaryKeys.isEmpty ? Array(parent.result.columns.indices) : parent.primaryKeys.compactMap { parent.result.columns.firstIndex(of: $0) }
             let origin = changedGrid ? NSPoint.zero : table.enclosingScrollView?.contentView.bounds.origin ?? .zero

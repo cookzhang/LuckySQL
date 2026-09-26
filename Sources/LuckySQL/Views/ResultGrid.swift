@@ -60,22 +60,17 @@ struct ResultGrid: View {
             if result.isTruncated {
                 Label("Partial preview — copy/export includes only the rows shown", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange).padding(6)
             }
-            if result.columns.isEmpty {
-                ContentUnavailableView(model.isRunning ? "Running query…" : "Ready to query", systemImage: "terminal", description: Text("Run SQL or select a table in the sidebar to preview its data."))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if model.section == .query {
+                QueryDataGrid(grid: dataGrid, tabID: model.activeTabID,
+                              results: Dictionary(uniqueKeysWithValues: model.queryTabs.map { ($0.id, $0.result.id) }))
+                    .overlay { if result.columns.isEmpty { emptyResult } }
+                if !result.columns.isEmpty && result.rows.isEmpty { emptyRows }
+            } else if result.columns.isEmpty {
+                emptyResult
             } else {
-                DataGrid(result: result, gridID: "\(model.connectedProfileID?.uuidString ?? "local")/\(model.section == .data ? model.selectedTable?.id ?? "" : model.activeTabID.uuidString)",
-                         primaryKeys: model.section == .data ? model.tableColumns[model.selectedTable?.id ?? "", default: []].filter(\.isPrimaryKey).map(\.name) : [], inspect: { row, column in
-                    preview = CellPreview(row: row, column: column, name: result.columns[column], value: result.rows[row][column], isNull: result.isNull(row: row, column: column), deferred: result.deferredColumns.contains(result.columns[column]), binary: result.binaryCells[CellAddress(row: row, column: column)])
-                }, sort: model.section == .data ? { model.sortData(column: $0) } : nil,
-                         quickFilter: model.section == .data ? { row, column in
-                    guard !model.isRunning else { return }
-                    model.browseOptions.filterColumn = result.columns[column]
-                    model.browseOptions.filterOperator = result.isNull(row: row, column: column) ? .isNull : .equals
-                    model.browseOptions.filterValue = result.rows[row][column]; model.refreshData(resetPage: true)
-                } : nil, delete: model.canMutateSelectedTable ? { pendingDelete = $0 } : nil)
+                dataGrid
                 if result.rows.isEmpty {
-                    Text(LocalizedStringKey(result.isTruncated ? "Rows exceed the preview budget — select fewer or smaller columns" : "No matching rows · column headers are preserved")).font(.caption).foregroundStyle(.secondary).padding(8)
+                    emptyRows
                 }
             }
         }
@@ -89,6 +84,32 @@ struct ResultGrid: View {
         } message: { Text("This writes to the database immediately and cannot be undone. The row is matched by its primary key.") }
         .onChange(of: result.id) { _, _ in preview = nil; pendingDelete = nil }
     }
+    private var emptyResult: some View {
+        ContentUnavailableView(model.isRunning ? "Running query…" : "Ready to query", systemImage: "terminal", description: Text("Run SQL or select a table in the sidebar to preview its data."))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    private var emptyRows: some View {
+        Text(LocalizedStringKey(result.isTruncated ? "Rows exceed the preview budget — select fewer or smaller columns" : "No matching rows · column headers are preserved")).font(.caption).foregroundStyle(.secondary).padding(8)
+    }
+    private var dataGrid: DataGrid {
+        let snapshot = result
+        return DataGrid(
+            result: snapshot,
+            gridID: "\(model.connectedProfileID?.uuidString ?? "local")/\(model.section == .data ? model.selectedTable?.id ?? "" : model.activeTabID.uuidString)",
+            primaryKeys: model.section == .data ? model.tableColumns[model.selectedTable?.id ?? "", default: []].filter(\.isPrimaryKey).map(\.name) : [],
+            inspect: { row, column in
+                preview = CellPreview(row: row, column: column, name: snapshot.columns[column], value: snapshot.rows[row][column], isNull: snapshot.isNull(row: row, column: column), deferred: snapshot.deferredColumns.contains(snapshot.columns[column]), binary: snapshot.binaryCells[CellAddress(row: row, column: column)])
+            },
+            sort: model.section == .data ? { model.sortData(column: $0) } : nil,
+            quickFilter: model.section == .data ? { row, column in
+                guard !model.isRunning else { return }
+                model.browseOptions.filterColumn = snapshot.columns[column]
+                model.browseOptions.filterOperator = snapshot.isNull(row: row, column: column) ? .isNull : .equals
+                model.browseOptions.filterValue = snapshot.rows[row][column]; model.refreshData(resetPage: true)
+            } : nil,
+            delete: model.canMutateSelectedTable ? { pendingDelete = $0 } : nil)
+    }
+
 }
 
 private struct CellPreview: Identifiable {

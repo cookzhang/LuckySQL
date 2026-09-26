@@ -8,26 +8,33 @@ struct EditorView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 2) {
-                        ForEach(model.queryTabs) { tab in
-                            HStack(spacing: 8) {
-                                Button { model.selectTab(tab.id) } label: {
-                                    QueryTabLabel(title: tab.title, document: tab.document)
-                                }.buttonStyle(.plain)
-                                Button {
-                                    model.requestCloseTab(tab.id)
-                                } label: { Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)) }
-                                    .buttonStyle(.plain).disabled(model.isRunning).help("Close query tab")
-                            }.padding(.horizontal, 12).frame(height: 32)
-                                .background(tab.id == model.activeTabID ? Color.accentColor.opacity(0.12) : .clear)
-                                .overlay(alignment: .bottom) { if tab.id == model.activeTabID { Color.accentColor.frame(height: 2) } }
-                                .contextMenu {
-                                    Button("Rename Tab…") { rename = tab.title; model.renamingTab = tab.id }
-                                    Button("Close Tab") { model.requestCloseTab(tab.id) }.disabled(model.isRunning)
-                                }
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 2) {
+                            ForEach(model.queryTabs) { tab in
+                                HStack(spacing: 0) {
+                                    Button { model.selectTab(tab.id) } label: {
+                                        QueryTabLabel(title: tab.title, document: tab.document)
+                                            .padding(.leading, 12).padding(.trailing, 8).frame(height: 32)
+                                            .contentShape(Rectangle())
+                                    }.buttonStyle(.plain)
+                                    Button {
+                                        model.requestCloseTab(tab.id)
+                                    } label: { Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)).frame(width: 26, height: 32).contentShape(Rectangle()) }
+                                        .buttonStyle(.plain).disabled(model.isRunning).help("Close query tab")
+                                }.frame(height: 32)
+                                    .id(tab.id)
+                                    .background(tab.id == model.activeTabID ? Color.accentColor.opacity(0.12) : .clear)
+                                    .overlay(alignment: .bottom) { if tab.id == model.activeTabID { Color.accentColor.frame(height: 2) } }
+                                    .contextMenu {
+                                        Button("Rename Tab…") { rename = tab.title; model.renamingTab = tab.id }
+                                        Button("Close Tab") { model.requestCloseTab(tab.id) }.disabled(model.isRunning)
+                                    }
+                            }
                         }
                     }
+                    .onChange(of: model.activeTabID) { _, id in proxy.scrollTo(id) }
+                    .onAppear { proxy.scrollTo(model.activeTabID) }
                 }
                 Button { model.newQuery() } label: { Image(systemName: "plus") }.buttonStyle(.borderless).padding(.horizontal, 12).help("New query (⌘T)")
             }.background(.bar)
@@ -74,7 +81,11 @@ struct EditorView: View {
         .sheet(isPresented: Binding(get: { parametersSQL != nil }, set: { if !$0 { parametersSQL = nil } })) {
             if let source = parametersSQL { ParameterEditorView(source: source).environmentObject(model) }
         }
-        .task(id: model.selectedDatabase + model.activeTabID.uuidString + String(model.isConnected)) { await model.loadCompletionMetadata() }
+        .task(id: model.selectedDatabase + model.activeTabID.uuidString + String(model.isConnected)) {
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            await model.loadCompletionMetadata()
+        }
         .confirmationDialog("Close this query tab?", isPresented: Binding(get: { model.closingTab != nil }, set: { if !$0 { model.closingTab = nil } })) {
             Button("Close Tab", role: .destructive) { if let id = model.closingTab { model.closeTab(id) }; model.closingTab = nil }
         } message: { Text("Its local draft will be removed. Save it to a SQL file first if you want to keep it.") }
@@ -102,7 +113,7 @@ private struct QueryDocumentEditor: View {
     @ObservedObject var document: QueryDocument
     let id: UUID
     var body: some View {
-        SQLTextEditor(text: Binding(get: { document.sql }, set: { model.sql = $0 }),
+        SQLTextEditor(text: Binding(get: { document.sql }, set: { model.updateSQL($0, in: id) }),
                       selection: Binding(get: { document.selection }, set: { document.selection = $0 }),
                       completionCatalog: model.completionCatalog, documentID: id.uuidString, sessions: model.editorSessions) { count in
             if document.lineCount != count { document.lineCount = count }
