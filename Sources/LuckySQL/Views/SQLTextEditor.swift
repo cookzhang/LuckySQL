@@ -53,7 +53,6 @@ struct SQLTextEditor: NSViewRepresentable {
         scroll.rulersVisible = true
         coordinator.documentID = documentID
         coordinator.pendingEdit = nil
-        coordinator.scheduleHighlight(editor)
         return scroll
     }
     private func install(in host: NSView, coordinator: Coordinator) {
@@ -70,10 +69,17 @@ struct SQLTextEditor: NSViewRepresentable {
         scroll.translatesAutoresizingMaskIntoConstraints = false
         host.addSubview(scroll)
         NSLayoutConstraint.activate([scroll.leadingAnchor.constraint(equalTo: host.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: host.trailingAnchor), scroll.topAnchor.constraint(equalTo: host.topAnchor), scroll.bottomAnchor.constraint(equalTo: host.bottomAnchor)])
-        if let editor = scroll.documentView as? CodeTextView { coordinator.scheduleHighlight(editor) }
+        if let editor = scroll.documentView as? CodeTextView {
+            coordinator.cancelHighlight()
+            if let analysis = editor.analysis, (analysis.sql as NSString).isEqual(to: editor.string) {
+                editor.colorVisibleText()
+            } else {
+                coordinator.scheduleHighlight(editor)
+            }
+        }
         if isEditable {
             DispatchQueue.main.async { [weak scroll] in
-                guard let editor = scroll?.documentView as? CodeTextView, editor.window?.isKeyWindow == true else { return }
+                guard let editor = scroll?.documentView as? CodeTextView, editor.window?.isKeyWindow == true, !editor.isHiddenOrHasHiddenAncestor else { return }
                 editor.window?.makeFirstResponder(editor)
             }
         }
@@ -145,6 +151,7 @@ struct SQLTextEditor: NSViewRepresentable {
         func highlight(_ editor: NSTextView) {
             apply(SQLTools.tokens(editor.string), to: editor)
         }
+        func cancelHighlight() { highlightTask?.cancel() }
         func scheduleHighlight(_ editor: NSTextView) {
             highlightTask?.cancel()
             let source = editor.string, id = documentID, edit = pendingEdit

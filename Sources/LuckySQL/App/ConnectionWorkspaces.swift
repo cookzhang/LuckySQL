@@ -14,11 +14,11 @@ import Combine
     private let makeModel: @MainActor (WorkspaceStore) -> AppModel
     private var saveTask: Task<Void, Never>?
     private var lastSaved: [Saved] = []
-    private var subscriptions: [UUID: AnyCancellable] = [:]
+    private var subscriptions: [UUID: Set<AnyCancellable>] = [:]
     var isBusy: Bool { entries.contains { $0.model.isRunning } }
     var hasPendingGridChanges: Bool { entries.contains { !$0.model.gridChanges.isEmpty } }
     @Published var entries: [Entry]
-    @Published var selectedID: UUID { didSet { persist() } }
+    @Published var selectedID: UUID { didSet { if selectedID != oldValue { scheduleSave() } } }
     var active: AppModel { entries.first(where: { $0.id == selectedID })!.model }
     init(defaults: UserDefaults = .standard, makeModel: @escaping @MainActor (WorkspaceStore) -> AppModel = { AppModel(workspaceStore: $0) }) {
         self.defaults = defaults; self.makeModel = makeModel
@@ -50,7 +50,25 @@ import Combine
     }
     private func configure(_ model: AppModel) {
         if let entry = entries.first(where: { $0.model === model }) {
-            subscriptions[entry.id] = model.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send(); self?.scheduleSave() }
+            let id = entry.id
+            let updates = model.objectWillChange.sink { [weak self] _ in
+                // Background panes and tab labels observe their own models directly.
+                guard let self, self.selectedID == id else { return }
+                self.objectWillChange.send()
+            }
+            let profile = model.$selectedProfileID.removeDuplicates().dropFirst().sink { [weak self] _ in
+                self?.scheduleSave()
+            }
+            // Global install/quit controls still need operation and pending-edit changes.
+            let busy = model.$isRunning.removeDuplicates().dropFirst().sink { [weak self] _ in
+                guard let self, self.selectedID != id else { return }
+                self.objectWillChange.send()
+            }
+            let pendingEdits = model.$gridChanges.map { !$0.isEmpty }.removeDuplicates().dropFirst().sink { [weak self] _ in
+                guard let self, self.selectedID != id else { return }
+                self.objectWillChange.send()
+            }
+            subscriptions[id] = [updates, profile, busy, pendingEdits]
         }
         model.profilesDidChange = { [weak self, weak model] in
             guard let self else { return }
@@ -90,8 +108,8 @@ struct ConnectionWorkspacesView: View {
     @ObservedObject var workspaces: ConnectionWorkspaces
     @State private var pendingClose: UUID?
     var body: some View {
-        ContentView(workspaceTabs: AnyView(workspaceTabs))
-            .environmentObject(workspaces.active).id(workspaces.selectedID)
+        ContentView(workspaces: workspaces, workspaceTabs: AnyView(workspaceTabs))
+            .environmentObject(workspaces.active)
         .confirmationDialog("Discard staged changes and close workspace?", isPresented: Binding(get: { pendingClose != nil }, set: { if !$0 { pendingClose = nil } })) {
             Button("Discard and Close", role: .destructive) { if let id = pendingClose { workspaces.close(id) }; pendingClose = nil }
         } message: { Text("SQL drafts are saved. Uncommitted grid changes in this workspace will be discarded.") }
@@ -99,18 +117,23 @@ struct ConnectionWorkspacesView: View {
 
     private var workspaceTabs: some View {
         HStack(spacing: 0) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 0) {
-                    ForEach(workspaces.entries) { entry in
-                        WorkspaceConnectionTab(model: entry.model, selected: workspaces.selectedID == entry.id,
-                                               select: { workspaces.selectedID = entry.id },
-                                               close: { if entry.model.gridChanges.isEmpty { workspaces.close(entry.id) } else { pendingClose = entry.id } }, canClose: workspaces.entries.count > 1)
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 0) {
+                        ForEach(workspaces.entries) { entry in
+                            WorkspaceConnectionTab(model: entry.model, selected: workspaces.selectedID == entry.id,
+                                                   select: { workspaces.selectedID = entry.id },
+                                                   close: { if entry.model.gridChanges.isEmpty { workspaces.close(entry.id) } else { pendingClose = entry.id } }, canClose: workspaces.entries.count > 1)
+                                .id(entry.id)
+                        }
                     }
                 }
+                .onChange(of: workspaces.selectedID) { _, id in proxy.scrollTo(id) }
+                .onAppear { proxy.scrollTo(workspaces.selectedID) }
             }
             Button { workspaces.newWorkspace() } label: { Image(systemName: "plus") }
-                .buttonStyle(.plain).padding(.horizontal, 12).help("New Workspace")
-                .accessibilityLabel("New Workspace")
+                .buttonStyle(.plain).padding(.horizontal, 12).help("New Connection Workspace")
+                .accessibilityLabel("New Connection Workspace")
         }
         .frame(height: 34)
         .background(Color(nsColor: .windowBackgroundColor))
@@ -125,25 +148,35 @@ private struct WorkspaceConnectionTab: View {
     let close: () -> Void
     let canClose: Bool
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 0) {
             Button(action: select) {
-                HStack(spacing: 4) {
-                    if model.isRunning { ProgressView().controlSize(.mini) }
-                    else { Circle().fill(model.isConnected ? Color.green : Color.secondary.opacity(0.5)).frame(width: 6, height: 6) }
-                    Text(model.profiles.first(where: { $0.id == model.connectedProfileID })?.name ?? model.selectedProfile?.name ?? "Workspace").lineLimit(1).truncationMode(.middle)
-                        .frame(maxWidth: 200)
-
+                HStack(spacing: 7) {
+                    ZStack {
+                        if model.isRunning { ProgressView().controlSize(.mini) }
+                        else { Circle().fill(model.isConnected ? Color.green : Color.secondary.opacity(0.5)).frame(width: 6, height: 6) }
+                    }.frame(width: 12, height: 12)
+                    Text(model.profiles.first(where: { $0.id == model.connectedProfileID })?.name ?? model.selectedProfile?.name ?? NSLocalizedString("Workspace", comment: ""))
+                        .lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 0)
                 }
-            }.buttonStyle(.plain)
-            if canClose { Button(action: close) { Image(systemName: "xmark") }.buttonStyle(.plain).disabled(model.isRunning) }
+                .padding(.leading, 12).padding(.trailing, 8)
+                .frame(minWidth: 110, maxWidth: 200, minHeight: 34)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            if canClose {
+                Button(action: close) { Image(systemName: "xmark").font(.system(size: 10)).frame(width: 26, height: 34).contentShape(Rectangle()) }
+                    .buttonStyle(.plain).disabled(model.isRunning)
+                    .help("Close Connection Workspace")
+                    .accessibilityLabel("Close Connection Workspace")
+            }
         }
-        .font(.system(size: 12, weight: selected ? .medium : .regular))
+        .font(.system(size: 12, weight: selected ? .semibold : .regular))
         .foregroundStyle(selected ? .primary : .secondary)
-        .padding(.horizontal, 12).frame(height: 34)
-        .background(selected ? Color(nsColor: .controlBackgroundColor) : .clear)
+        .background(selected ? Color.accentColor.opacity(0.10) : .clear)
         .overlay(alignment: .top) { if selected { Color.accentColor.frame(height: 2) } }
         .overlay(alignment: .trailing) { Divider().padding(.vertical, 8) }
         .help(model.connectionLabel)
-
     }
 }

@@ -122,14 +122,21 @@ final class AppModel: ObservableObject {
     var sql: String {
         get { queryTabs[activeTabIndex].sql }
         set {
-            queryTabs[activeTabIndex].document.sql = newValue
-            scheduleCompletionMetadata()
-            draftSaveTask?.cancel()
-            draftSaveTask = Task { [weak self] in
-                try? await Task.sleep(for: .milliseconds(500))
-                guard !Task.isCancelled else { return }
-                self?.saveWorkspace()
-            }
+            updateSQL(newValue, in: activeTabID)
+        }
+    }
+    func updateSQL(_ text: String, in tabID: UUID) {
+        guard let tab = queryTabs.first(where: { $0.id == tabID }) else { return }
+        tab.document.sql = text
+        if tabID == activeTabID { scheduleCompletionMetadata() }
+        scheduleWorkspaceSave()
+    }
+    private func scheduleWorkspaceSave() {
+        draftSaveTask?.cancel()
+        draftSaveTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            self?.saveWorkspace()
         }
     }
     var sqlSelection: NSRange {
@@ -209,9 +216,16 @@ final class AppModel: ObservableObject {
         queryTabs.append(tab); activeTabID = tab.id; section = .query; saveWorkspace()
     }
     func selectTab(_ id: UUID) {
-        guard queryTabs.contains(where: { $0.id == id }) else { return }
-        saveWorkspace(); activeTabID = id; selectedDatabase = queryTabs[activeTabIndex].database; section = .query
-        workspaceStore.saveActiveIndex(activeTabIndex)
+        guard let index = queryTabs.firstIndex(where: { $0.id == id }) else { return }
+        if activeTabID != id {
+            // Preserve the outgoing database synchronously, but keep draft encoding
+            // and preference writes out of the tab-switch event.
+            if queryTabs[activeTabIndex].database != selectedDatabase { queryTabs[activeTabIndex].database = selectedDatabase }
+            activeTabID = id
+            if selectedDatabase != queryTabs[index].database { selectedDatabase = queryTabs[index].database }
+            scheduleWorkspaceSave()
+        }
+        if section != .query { section = .query }
     }
     func closeTab(_ id: UUID) {
         guard !isRunning else { return }

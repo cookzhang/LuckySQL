@@ -185,3 +185,6 @@
 "Expand Results" = "展开查询结果";
 "Restore SQL Editor" = "恢复 SQL 编辑器";
 "SQL Editor Height" = "SQL 编辑器高度";
+
+"New Connection Workspace" = "新建连接工作区";
+"Close Connection Workspace" = "关闭连接工作区";

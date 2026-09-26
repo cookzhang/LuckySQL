@@ -2,37 +2,14 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var model: AppModel
+    let workspaces: ConnectionWorkspaces
     var workspaceTabs: AnyView? = nil
     @State private var sidebarVisible = true
     var body: some View {
-        WorkspaceSplitView(sidebarVisible: $sidebarVisible) {
-            SchemaSidebar()
-        } detail: {
-            VStack(spacing: 0) {
-                if let workspaceTabs { workspaceTabs }
-                switch model.section {
-                case .query:
-                    QueryWorkspaceView()
-                        .background(SplitLayoutPersistence())
-                case .data: TableBrowserView()
-                case .structure: StructureView()
-                }
-                Divider()
-                HStack(spacing: 8) {
-                    Circle().fill(model.isConnected ? .green : .secondary).frame(width: 6, height: 6)
-                    Text(LocalizedStringKey(model.isConnected ? "Connected" : "Disconnected"))
-                    if let profile = model.profiles.first(where: { $0.id == model.connectedProfileID }) { Text(profile.host + ":" + String(profile.port)).foregroundStyle(.secondary) }
-                    Spacer()
-                    if model.isLoadingPassword { ProgressView().controlSize(.mini); Text("Loading saved password…") }
-                    else if model.isRunning {
-                        ProgressView().controlSize(.mini)
-                        Text(model.busyStage.isEmpty ? "Working…" : model.busyStage).lineLimit(1)
-                        if let start = model.busySince { Text(start, style: .timer).monospacedDigit() }
-                    }
-                    else if let notice = model.passwordNotice { Text(notice).lineLimit(1).help(notice).foregroundStyle(.secondary) }
-                    else { Text("MySQL workspace").foregroundStyle(.secondary) }
-                }.font(.caption).padding(.horizontal, 12).frame(height: 28).background(.bar)
-            }
+        VStack(spacing: 0) {
+            if let workspaceTabs { workspaceTabs }
+            WorkspaceContentCache(entries: workspaces.entries, selectedID: workspaces.selectedID,
+                                  sidebarVisible: $sidebarVisible)
         }
         .background(WorkspaceWindowMarker())
         .navigationTitle("LuckySQL")
@@ -58,6 +35,14 @@ struct ContentView: View {
                 }
             }
             ToolbarItemGroup(placement: .primaryAction) {
+                Button("Refresh", systemImage: "arrow.clockwise") {
+                    let loaded = model.schemas.filter { $0.tableLoadState == .loaded }.map(\.name)
+                    Task {
+                        await model.loadSchemas()
+                        for name in loaded { await model.loadTables(in: name) }
+                    }
+                }.disabled(!model.isConnected || model.isRunning)
+
                 if model.isConnected { Button("Disconnect", systemImage: "bolt.slash") { model.disconnect() }.disabled(model.isRunning) }
                 else { Button("Connect", systemImage: "bolt") { model.requestConnect() }.disabled(model.isRunning) }
                 Button("Find Table", systemImage: "magnifyingglass") { model.showTableFinder = true }.disabled(!model.isConnected)

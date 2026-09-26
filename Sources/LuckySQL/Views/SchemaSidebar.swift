@@ -57,19 +57,6 @@ struct SchemaSidebar: View {
             .frame(height: 28)
         }
         .background(Color(nsColor: .windowBackgroundColor))
-        .toolbar {
-            ToolbarItem {
-                Button("Refresh", systemImage: "arrow.clockwise") {
-                    Task {
-                        await model.loadSchemas()
-                        for schema in model.schemas where expandedSchemas.contains(schema.name) {
-                            await model.loadTables(in: schema.name)
-                        }
-                    }
-                }
-                .disabled(!model.isConnected || model.isRunning)
-            }
-        }
         .onAppear { expandConnectedProfile(model.connectedProfileID) }
         .onChange(of: model.connectedProfileID) { _, profileID in
             expandConnectedProfile(profileID)
