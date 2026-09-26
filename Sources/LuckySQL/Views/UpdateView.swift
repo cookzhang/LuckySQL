@@ -32,9 +32,29 @@ struct UpdateView: View {
             if workspaces.hasPendingGridChanges { Text("Commit or discard pending table changes in every workspace before installing or restarting.").font(.caption) }
             if workspaces.isBusy { Text("Wait for the active database operation to finish before installing or restarting.").font(.caption) }
         }.padding(24).frame(width: 640)
+            .background(UpdateSheetWindow { updater.trackPresentationWindow($0) })
             .interactiveDismissDisabled(updater.busy)
             .confirmationDialog("Install this update?", isPresented: $confirmInstall) {
                 Button("Install Verified Update") { updater.install(workspaces: workspaces) }
             } message: { Text("Your current app will be replaced, with a backup retained beside it. SQL drafts are saved first. Restart when installation finishes.") }
+    }
+}
+
+/// Report the specific update sheet instead of guessing from the key window.
+private struct UpdateSheetWindow: NSViewRepresentable {
+    let onWindow: (NSWindow) -> Void
+    func makeNSView(context: Context) -> Marker { Marker(onWindow: onWindow) }
+    func updateNSView(_ view: Marker, context: Context) { view.onWindow = onWindow }
+    final class Marker: NSView {
+        var onWindow: (NSWindow) -> Void
+        init(onWindow: @escaping (NSWindow) -> Void) {
+            self.onWindow = onWindow
+            super.init(frame: .zero)
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let window { onWindow(window) }
+        }
     }
 }
