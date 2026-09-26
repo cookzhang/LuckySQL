@@ -234,9 +234,18 @@ final class AppUpdater: ObservableObject {
     private var asset: AppRelease.Asset?
     private var task: Task<Void, Never>?
     private let service: UpdateService
+    private let applicationURL: URL
+    private let restartApplication: @MainActor (URL) throws -> Void
+    private weak var presentationWindow: NSWindow?
     let currentVersion: String
-    init(service: UpdateService = UpdateService(), currentVersion: String = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.4.0") {
+    init(service: UpdateService = UpdateService(),
+         currentVersion: String = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.4.0",
+         applicationURL: URL = Bundle.main.bundleURL,
+         restartApplication: @escaping @MainActor (URL) throws -> Void = { try AppRelauncher.restart(at: $0) }) {
         self.service = service; self.currentVersion = currentVersion
+        // Retain the installation location before replacement moves the old bundle.
+        self.applicationURL = applicationURL
+        self.restartApplication = restartApplication
     }
     func check() {
         isPresented = true
@@ -279,23 +288,47 @@ final class AppUpdater: ObservableObject {
         task = Task {
             defer { busy = false }
             do {
-                let backup = try await service.install(downloadedApp, at: Bundle.main.bundleURL, version: String(release.tag_name.dropFirst()))
+                let backup = try await service.install(downloadedApp, at: applicationURL, version: String(release.tag_name.dropFirst()))
                 installed = true
                 status = "Update installed. Restart to use it. Previous app retained at \(backup.path)."
             } catch { self.error = error.localizedDescription; status = "Installation failed. You can retry or reveal the verified download." }
         }
     }
+    func trackPresentationWindow(_ window: NSWindow) { presentationWindow = window }
+
     func restart(workspaces: ConnectionWorkspaces) {
-        guard installed, !workspaces.isBusy, !workspaces.hasPendingGridChanges else { return }
-        workspaces.flush(); for entry in workspaces.entries { entry.model.disconnect() }
-        do {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/sh")
-            // Positional arguments, never interpolation of a filesystem path into
-            // shell source. Only launch after this process has actually exited.
-            process.arguments = ["-c", "for i in $(seq 1 120); do if ! kill -0 \"$1\" 2>/dev/null; then exec /usr/bin/open \"$2\"; fi; sleep 1; done", "LuckySQL-relaunch", String(ProcessInfo.processInfo.processIdentifier), Bundle.main.bundleURL.path]
-            try process.run()
-            NSApp.terminate(nil)
-        } catch { self.error = "Could not restart automatically. Quit and reopen LuckySQL. \(error.localizedDescription)" }
+        guard installed, !busy else { return }
+        guard !workspaces.isBusy, !workspaces.hasPendingGridChanges else {
+            error = "Finish active operations and commit or discard pending changes before restarting."
+            return
+        }
+        let sheet = presentationWindow
+        busy = true; error = nil; status = "Restarting LuckySQL…"
+        isPresented = false
+        task = Task {
+            do {
+                // SwiftUI's onDismiss may run before AppKit detaches the sheet.
+                // Wait for the actual native lifecycle, with a bounded failure path.
+                let deadline = ContinuousClock.now + .seconds(5)
+                while sheet?.sheetParent != nil {
+                    guard ContinuousClock.now < deadline else {
+                        throw UpdateFailure("The update dialog could not close. Close it and try again.")
+                    }
+                    try await Task.sleep(for: .milliseconds(20))
+                }
+                try Task.checkCancellation()
+                guard !workspaces.isBusy, !workspaces.hasPendingGridChanges else {
+                    throw UpdateFailure("Finish active operations and commit or discard pending changes before restarting.")
+                }
+                workspaces.flush()
+                for entry in workspaces.entries { entry.model.disconnect() }
+                try restartApplication(applicationURL)
+            } catch {
+                busy = false
+                status = "Restart failed. You can retry."
+                self.error = "Could not restart automatically. Close any other dialogs and try again, or quit and reopen LuckySQL. \(error.localizedDescription)"
+                isPresented = true
+            }
+        }
     }
 }
