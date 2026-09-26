@@ -24,6 +24,7 @@ import XCTest
         defer { window.close() }
         try await settle(host)
         let editor = try XCTUnwrap(find(CodeTextView.self, in: host))
+        try await waitUntil { editor.analysis?.sql == editor.string }
         let grid = try XCTUnwrap(find(CopyableTableView.self, in: host))
         let coordinator = try XCTUnwrap(grid.delegate as? DataGrid.Coordinator)
         let reloads = coordinator.reloadCount
@@ -114,6 +115,16 @@ import XCTest
 
     private func result(columns: Int, prefix: String) -> QueryResult {
         QueryResult(columns: (0..<columns).map { "column\($0)" }, rows: (0..<1000).map { row in (0..<columns).map { "\(prefix):\(row):\($0)" } }, elapsed: .zero, message: "1000 rows")
+    }
+    private func waitUntil(_ ready: () -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(10)
+        while !ready() {
+            guard ContinuousClock.now < deadline else {
+                XCTFail("Timed out waiting for asynchronous editor analysis")
+                throw NSError(domain: "QueryTabSwitchingTests", code: 1)
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
     }
     private func settle(_ host: NSView) async throws {
         host.layoutSubtreeIfNeeded(); host.window?.displayIfNeeded()
