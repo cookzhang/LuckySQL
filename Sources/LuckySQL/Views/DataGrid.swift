@@ -137,7 +137,8 @@ struct DataGrid: NSViewRepresentable {
             }
             table.reloadData()
             visibleColumns = columnsInViewport(table)
-            let indices = selection.isEmpty ? [] : parent.result.rows.indices.filter { rowKey($0).map { key in selection.contains { $0 == key } } == true }
+            let selectedKeys = Set(selection)
+            let indices = selectedKeys.isEmpty ? [] : parent.result.rows.indices.filter { rowKey($0).map { selectedKeys.contains($0) } == true }
             table.selectRowIndexes(IndexSet(indices), byExtendingSelection: false)
             (table as? CopyableTableView)?.activeRow = table.selectedRow
             if let scroll = table.enclosingScrollView {
@@ -257,7 +258,16 @@ final class CopyableTableView: NSTableView {
     override func mouseDown(with event: NSEvent) {
         activeColumn = max(0, column(at: convert(event.locationInWindow, from: nil)))
         activeRow = row(at: convert(event.locationInWindow, from: nil))
+        collapseSelectionForClick(row: activeRow, modifiers: event.modifierFlags, clickCount: event.clickCount)
         super.mouseDown(with: event)
+    }
+    func collapseSelectionForClick(row: Int, modifiers: NSEvent.ModifierFlags, clickCount: Int) {
+        guard clickCount == 1, modifiers.intersection([.command, .shift, .control, .option]).isEmpty,
+              row >= 0, row < numberOfRows, selectedRowIndexes.count > 1,
+              selectedRowIndexes.contains(row) else { return }
+        // Commit the single-row selection before AppKit tracks a possible drag
+        // of the previously selected rows. Modified clicks keep native behavior.
+        selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
     }
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)

@@ -128,58 +128,12 @@ struct SchemaSidebar: View {
                 .foregroundStyle(.secondary)
         case .loaded:
             ForEach(schema.tables.filter { (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search)) && (!favoritesOnly || model.isFavorite($0)) }) { table in
-                DisclosureGroup {
-                    tableStructure(for: table)
-                } label: {
-                    HStack {
-                        Button { model.selectTable(table) } label: {
-                            Label(table.name, systemImage: model.isFavorite(table) ? "star.fill" : "tablecells")
-                                .lineLimit(1).truncationMode(.middle)
-                                .foregroundStyle(model.selectedTable == table ? Color.accentColor : .primary)
-                        }.buttonStyle(.plain).disabled(model.isRunning).help("Preview \(table.id)")
-                        Spacer()
-                        Button("Browse", systemImage: "arrow.right.circle") { model.browse(table) }
-                            .labelStyle(.iconOnly)
-                            .buttonStyle(.plain)
-                            .help("Browse rows")
-                    }
-                }
-                .contextMenu {
-                    Button("Preview Data") { model.browse(table) }.disabled(model.isRunning)
-                    Button("Preview Structure") { model.showStructure(table) }.disabled(model.isRunning)
-                    Divider()
-                    Button(model.isFavorite(table) ? "Remove Favorite" : "Add Favorite") { model.toggleFavorite(table) }
-                    Button("Copy Qualified Name") { model.copy("`\(table.schema.replacingOccurrences(of: "`", with: "``"))`.`\(table.name.replacingOccurrences(of: "`", with: "``"))`") }
-                }
+                SchemaTableRow(model: model, table: table, columns: model.tableColumns[table.id],
+                               isSelected: model.selectedTable == table, isFavorite: model.isFavorite(table),
+                               isRunning: model.isRunning)
+                    .equatable()
             }
         }
-    }
-
-    @ViewBuilder
-    private func tableStructure(for table: DatabaseTable) -> some View {
-        if let columns = model.tableColumns[table.id] {
-            ForEach(columns) { column in
-                HStack(spacing: 5) {
-                    Image(systemName: column.isPrimaryKey ? "key.fill" : "rectangle.and.pencil.and.ellipsis")
-                        .foregroundStyle(column.isPrimaryKey ? .orange : .secondary)
-                    Text(column.name).lineLimit(1)
-                    Spacer()
-                    Text(column.dataType).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    if column.isNullable { Text("NULL").font(.caption2).foregroundStyle(.tertiary) }
-                }
-                .help(columnHelp(column))
-            }
-        } else {
-            HStack { ProgressView().controlSize(.small); Text("Loading columns…") }
-                .task { await model.loadColumns(in: table) }
-        }
-    }
-
-    private func columnHelp(_ column: TableColumn) -> String {
-        var parts = [column.dataType]
-        if let value = column.defaultValue { parts.append("default \(value)") }
-        if !column.extra.isEmpty { parts.append(column.extra) }
-        return parts.joined(separator: " · ")
     }
 
     private func metadataError(_ message: String, retry: @escaping () -> Void) -> some View {
@@ -237,5 +191,75 @@ struct SchemaSidebar: View {
     private func expandConnectedProfile(_ profileID: UUID?) {
         guard let profileID else { return }
         expandedConnections = [profileID]
+    }
+}
+
+// Pass only row-specific state so unrelated query publications do not rebuild
+// every disclosure group and context menu in a large schema.
+struct SchemaTableRow: View, Equatable {
+    let model: AppModel
+    let table: DatabaseTable
+    let columns: [TableColumn]?
+    let isSelected: Bool
+    let isFavorite: Bool
+    let isRunning: Bool
+    @State private var isExpanded = false
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.model === rhs.model && lhs.table == rhs.table && lhs.columns == rhs.columns
+            && lhs.isSelected == rhs.isSelected && lhs.isFavorite == rhs.isFavorite && lhs.isRunning == rhs.isRunning
+    }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $isExpanded) {
+            if isExpanded { tableStructure }
+        } label: {
+            HStack {
+                Button { model.selectTable(table) } label: {
+                    Label(table.name, systemImage: isFavorite ? "star.fill" : "tablecells")
+                        .lineLimit(1).truncationMode(.middle)
+                        .foregroundStyle(isSelected ? Color.accentColor : .primary)
+                }.buttonStyle(.plain).disabled(isRunning).help("Preview \(table.id)")
+                Spacer()
+                Button("Browse", systemImage: "arrow.right.circle") { model.browse(table) }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.plain)
+                    .help("Browse rows")
+            }
+        }
+        .contextMenu {
+            Button("Preview Data") { model.browse(table) }.disabled(isRunning)
+            Button("Preview Structure") { model.showStructure(table) }.disabled(isRunning)
+            Divider()
+            Button(isFavorite ? "Remove Favorite" : "Add Favorite") { model.toggleFavorite(table) }
+            Button("Copy Qualified Name") { model.copy("`\(table.schema.replacingOccurrences(of: "`", with: "``"))`.`\(table.name.replacingOccurrences(of: "`", with: "``"))`") }
+        }
+    }
+
+    @ViewBuilder
+    private var tableStructure: some View {
+        if let columns {
+            ForEach(columns) { column in
+                HStack(spacing: 5) {
+                    Image(systemName: column.isPrimaryKey ? "key.fill" : "rectangle.and.pencil.and.ellipsis")
+                        .foregroundStyle(column.isPrimaryKey ? .orange : .secondary)
+                    Text(column.name).lineLimit(1)
+                    Spacer()
+                    Text(column.dataType).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    if column.isNullable { Text("NULL").font(.caption2).foregroundStyle(.tertiary) }
+                }
+                .help(columnHelp(column))
+            }
+        } else {
+            HStack { ProgressView().controlSize(.small); Text("Loading columns…") }
+                .task { await model.loadColumns(in: table) }
+        }
+    }
+
+    private func columnHelp(_ column: TableColumn) -> String {
+        var parts = [column.dataType]
+        if let value = column.defaultValue { parts.append("default \(value)") }
+        if !column.extra.isEmpty { parts.append(column.extra) }
+        return parts.joined(separator: " · ")
     }
 }
