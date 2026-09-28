@@ -1,11 +1,64 @@
 import AppKit
 import Combine
 import Security
-import struct SwiftUI.Binding
+import SwiftUI
 import XCTest
 @testable import LuckySQL
 
 final class SmoothnessTests: XCTestCase {
+    @MainActor func testSelectAllThenClickCollapsesImmediatelyWithoutReloading() throws {
+        let result = QueryResult(columns: ["id"], rows: (0..<1000).map { [String($0)] }, elapsed: .zero, message: "")
+        let grid = DataGrid(result: result)
+        let coordinator = grid.makeCoordinator()
+        let scroll = grid.makeScroll(coordinator: coordinator)
+        let table = try XCTUnwrap(scroll.documentView as? CopyableTableView)
+        let reloads = coordinator.reloadCount
+        let requests = coordinator.cellRequests
+        table.selectAll(nil)
+        for modifiers: NSEvent.ModifierFlags in [.command, .shift, .control, .option] {
+            table.collapseSelectionForClick(row: 42, modifiers: modifiers, clickCount: 1)
+            XCTAssertEqual(table.selectedRowIndexes.count, 1000)
+        }
+        table.collapseSelectionForClick(row: -1, modifiers: [], clickCount: 1)
+        XCTAssertEqual(table.selectedRowIndexes.count, 1000)
+        table.collapseSelectionForClick(row: 42, modifiers: [], clickCount: 1)
+        XCTAssertEqual(table.selectedRowIndexes, IndexSet(integer: 42))
+        XCTAssertEqual(coordinator.reloadCount, reloads)
+        XCTAssertEqual(coordinator.cellRequests, requests)
+    }
+
+    @MainActor func testRefreshRestoresAllSelectedRowsByKeyAfterReordering() throws {
+        let result = QueryResult(columns: ["id"], rows: (0..<1000).map { [String($0)] }, elapsed: .zero, message: "")
+        let grid = DataGrid(result: result, primaryKeys: ["id"])
+        let coordinator = grid.makeCoordinator()
+        let scroll = grid.makeScroll(coordinator: coordinator)
+        let table = try XCTUnwrap(scroll.documentView as? CopyableTableView)
+        table.selectAll(nil)
+        let updated = QueryResult(columns: ["id"], rows: [["new"]] + result.rows.reversed(), elapsed: .zero, message: "")
+        DataGrid(result: updated, primaryKeys: ["id"]).updateScroll(coordinator: coordinator)
+        XCTAssertEqual(table.selectedRowIndexes, IndexSet(integersIn: 1...1000))
+    }
+
+    @MainActor func testCollapsedSidebarRowDoesNotLoadColumnsWhenSelectionChanges() async throws {
+        let session = PagingSession()
+        let (model, defaults, name) = try makeModel(session: session)
+        defer { defaults.removePersistentDomain(forName: name) }
+        model.connect(); try await waitUntil { !model.isRunning }
+        defer { model.disconnect() }
+        let table = DatabaseTable(schema: "shop", name: "orders")
+        let host = NSHostingView(rootView: SchemaTableRow(model: model, table: table, columns: nil,
+                                                        isSelected: false, isFavorite: false, isRunning: false).equatable())
+        host.frame = NSRect(x: 0, y: 0, width: 300, height: 100)
+        host.layoutSubtreeIfNeeded()
+        host.rootView = SchemaTableRow(model: model, table: table, columns: nil,
+                                       isSelected: true, isFavorite: false, isRunning: false).equatable()
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+        let reads = await session.columnReads
+        XCTAssertEqual(reads, 0)
+        XCTAssertNil(model.tableColumns[table.id])
+    }
+
     @MainActor func testMarkedTextDoesNotReplaceDraftUntilCommitted() {
         var draft = ""
         let coordinator = SQLTextEditor.Coordinator(SQLTextEditor(text: Binding(get: { draft }, set: { draft = $0 })))
@@ -297,6 +350,7 @@ private struct PreviewDriver: DatabaseDriver {
 }
 private actor PagingSession: DatabaseSession {
     var queries: [String] = []
+    var columnReads = 0
     var closed = 0
     var previewHost: String?
     func recordPreviewHost(_ host: String) { previewHost = host }
@@ -310,6 +364,6 @@ private actor PagingSession: DatabaseSession {
     }
     func schemas() -> [String] { ["shop"] }
     func tables(in schema: String) -> [String] { ["orders"] }
-    func columns(in table: DatabaseTable) -> [TableColumn] { [TableColumn(name: "id", dataType: "bigint", isNullable: false, isPrimaryKey: true, defaultValue: nil, extra: "")] }
+    func columns(in table: DatabaseTable) -> [LuckySQL.TableColumn] { columnReads += 1; return [LuckySQL.TableColumn(name: "id", dataType: "bigint", isNullable: false, isPrimaryKey: true, defaultValue: nil, extra: "")] }
     func close() { closed += 1 }
 }
