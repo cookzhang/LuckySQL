@@ -131,7 +131,6 @@ struct SchemaSidebar: View {
                 SchemaTableRow(model: model, table: table, columns: model.tableColumns[table.id],
                                isSelected: model.selectedTable == table, isFavorite: model.isFavorite(table),
                                isRunning: model.isRunning)
-                    .equatable()
             }
         }
     }
@@ -194,9 +193,9 @@ struct SchemaSidebar: View {
     }
 }
 
-// Pass only row-specific state so unrelated query publications do not rebuild
-// every disclosure group and context menu in a large schema.
-struct SchemaTableRow: View, Equatable {
+// Keep this disclosure row unwrapped: EquatableView inside the nested List
+// can trigger a SwiftUI assertion when asynchronously loaded tables appear.
+struct SchemaTableRow: View {
     let model: AppModel
     let table: DatabaseTable
     let columns: [TableColumn]?
@@ -204,11 +203,6 @@ struct SchemaTableRow: View, Equatable {
     let isFavorite: Bool
     let isRunning: Bool
     @State private var isExpanded = false
-
-    static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.model === rhs.model && lhs.table == rhs.table && lhs.columns == rhs.columns
-            && lhs.isSelected == rhs.isSelected && lhs.isFavorite == rhs.isFavorite && lhs.isRunning == rhs.isRunning
-    }
 
     var body: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
