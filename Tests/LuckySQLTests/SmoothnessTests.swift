@@ -47,16 +47,85 @@ final class SmoothnessTests: XCTestCase {
         defer { model.disconnect() }
         let table = DatabaseTable(schema: "shop", name: "orders")
         let host = NSHostingView(rootView: SchemaTableRow(model: model, table: table, columns: nil,
-                                                        isSelected: false, isFavorite: false, isRunning: false).equatable())
+                                                        isSelected: false, isFavorite: false, isRunning: false))
         host.frame = NSRect(x: 0, y: 0, width: 300, height: 100)
         host.layoutSubtreeIfNeeded()
         host.rootView = SchemaTableRow(model: model, table: table, columns: nil,
-                                       isSelected: true, isFavorite: false, isRunning: false).equatable()
+                                       isSelected: true, isFavorite: false, isRunning: false)
         host.layoutSubtreeIfNeeded()
         try await Task.sleep(for: .milliseconds(100))
         let reads = await session.columnReads
         XCTAssertEqual(reads, 0)
         XCTAssertNil(model.tableColumns[table.id])
+    }
+
+    @MainActor func testSidebarNestedDisclosuresSurviveAsyncMetadataAndContextMenu() async throws {
+        let session = PagingSession(delay: .milliseconds(80))
+        let (model, defaults, name) = try makeModel(session: session)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 600),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let host = NSHostingView(rootView: SchemaSidebar().environmentObject(model))
+        window.contentView = host
+        window.orderFront(nil)
+        defer {
+            window.close(); model.disconnect(); model.flushWorkspace()
+            defaults.removePersistentDomain(forName: name)
+        }
+        model.connect()
+        try await waitUntil { !model.isRunning && model.schemaLoadState == .loaded }
+        try await Task.sleep(for: .milliseconds(150))
+        host.layoutSubtreeIfNeeded()
+        func findOutline(_ view: NSView) -> NSOutlineView? {
+            (view as? NSOutlineView) ?? view.subviews.lazy.compactMap { findOutline($0) }.first
+        }
+        let outline = try XCTUnwrap(findOutline(host))
+        XCTAssertEqual(outline.numberOfRows, 2) // connection and unloaded schema
+        outline.expandItem(outline.item(atRow: 1))
+        try await waitUntil { model.schemas.first?.tableLoadState == .loaded }
+        try await Task.sleep(for: .milliseconds(150))
+        host.layoutSubtreeIfNeeded()
+        XCTAssertEqual(outline.numberOfRows, 3)
+        var reads = await session.columnReads
+        XCTAssertEqual(reads, 0)
+        let table = DatabaseTable(schema: "shop", name: "orders")
+        outline.expandItem(outline.item(atRow: 2))
+        try await waitUntil { model.tableColumns[table.id] != nil }
+        try await Task.sleep(for: .milliseconds(150))
+        host.layoutSubtreeIfNeeded()
+        XCTAssertEqual(outline.numberOfRows, 4)
+        reads = await session.columnReads
+        XCTAssertEqual(reads, 1)
+        for _ in 0..<3 {
+            outline.collapseItem(outline.item(atRow: 2))
+            try await Task.sleep(for: .milliseconds(50))
+            XCTAssertEqual(outline.numberOfRows, 3)
+            outline.expandItem(outline.item(atRow: 2))
+            try await Task.sleep(for: .milliseconds(50))
+            XCTAssertEqual(outline.numberOfRows, 4)
+        }
+        let point = outline.convert(NSPoint(x: 150, y: outline.rect(ofRow: 2).midY), to: nil)
+        let event = try XCTUnwrap(NSEvent.mouseEvent(with: .rightMouseDown, location: point,
+            modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+            context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        let menuOpened = expectation(description: "Native sidebar context menu opened")
+        let observer = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification,
+                                                              object: nil, queue: nil) { notification in
+            guard let menu = notification.object as? NSMenu else { return }
+            MainActor.assumeIsolated {
+                XCTAssertFalse(menu.items.isEmpty)
+                menuOpened.fulfill()
+                let timer = Timer(timeInterval: 0.05, repeats: false) { _ in
+                    MainActor.assumeIsolated { menu.cancelTracking() }
+                }
+                RunLoop.main.add(timer, forMode: .eventTracking)
+            }
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        window.sendEvent(event)
+        await fulfillment(of: [menuOpened], timeout: 2)
+        reads = await session.columnReads
+        XCTAssertEqual(reads, 1)
     }
 
     @MainActor func testMarkedTextDoesNotReplaceDraftUntilCommitted() {
@@ -363,7 +432,14 @@ private actor PagingSession: DatabaseSession {
         return QueryResult(columns: ["id"], rows: (start..<(start + 101)).map { [String($0)] }, elapsed: .zero, message: "", retainedBytes: 1000)
     }
     func schemas() -> [String] { ["shop"] }
-    func tables(in schema: String) -> [String] { ["orders"] }
-    func columns(in table: DatabaseTable) -> [LuckySQL.TableColumn] { columnReads += 1; return [LuckySQL.TableColumn(name: "id", dataType: "bigint", isNullable: false, isPrimaryKey: true, defaultValue: nil, extra: "")] }
+    func tables(in schema: String) async -> [String] {
+        if delay > .zero { try? await Task.sleep(for: delay) }
+        return ["orders"]
+    }
+    func columns(in table: DatabaseTable) async -> [LuckySQL.TableColumn] {
+        columnReads += 1
+        if delay > .zero { try? await Task.sleep(for: delay) }
+        return [LuckySQL.TableColumn(name: "id", dataType: "bigint", isNullable: false, isPrimaryKey: true, defaultValue: nil, extra: "")]
+    }
     func close() { closed += 1 }
 }
