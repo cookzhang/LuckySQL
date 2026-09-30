@@ -89,6 +89,20 @@ final class SmoothnessTests: XCTestCase {
         var reads = await session.columnReads
         XCTAssertEqual(reads, 0)
         let table = DatabaseTable(schema: "shop", name: "orders")
+        // Click the blank trailing area of the table label, not its short text.
+        let selectionPoint = outline.convert(NSPoint(x: outline.bounds.maxX - 70,
+                                                     y: outline.rect(ofRow: 2).midY), to: nil)
+        for type: NSEvent.EventType in [.leftMouseDown, .leftMouseUp] {
+            let click = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: selectionPoint,
+                modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+            window.sendEvent(click)
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(model.selectedTable, table)
+        XCTAssertFalse(model.isRunning, "Selecting a table in SQL must not start blocking metadata work")
+        reads = await session.columnReads
+        XCTAssertEqual(reads, 0)
         outline.expandItem(outline.item(atRow: 2))
         try await waitUntil { model.tableColumns[table.id] != nil }
         try await Task.sleep(for: .milliseconds(150))

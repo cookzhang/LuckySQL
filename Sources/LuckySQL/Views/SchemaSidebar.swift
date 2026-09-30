@@ -213,12 +213,14 @@ struct SchemaTableRow: View {
                     Label(table.name, systemImage: isFavorite ? "star.fill" : "tablecells")
                         .lineLimit(1).truncationMode(.middle)
                         .foregroundStyle(isSelected ? Color.accentColor : .primary)
+                        .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+                        .contentShape(Rectangle())
                 }.buttonStyle(.plain).disabled(isRunning).help("Preview \(table.id)")
-                Spacer()
                 Button("Browse", systemImage: "arrow.right.circle") { model.browse(table) }
                     .labelStyle(.iconOnly)
                     .buttonStyle(.plain)
                     .help("Browse rows")
+                    .disabled(isRunning)
             }
         }
         .contextMenu {

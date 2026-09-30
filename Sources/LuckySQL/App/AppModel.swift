@@ -469,7 +469,6 @@ final class AppModel: ObservableObject {
         else {
             if let previous = resultTable { tableBrowseOptions[previous] = appliedBrowseOptions }
             selectedTable = table; browseOptions = tableBrowseOptions[table] ?? TableBrowseOptions()
-            Task { await loadColumns(in: table) }
         }
     }
     func browse(_ table: DatabaseTable) {

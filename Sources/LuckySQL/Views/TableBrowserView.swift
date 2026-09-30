@@ -38,7 +38,7 @@ struct TableBrowserView: View {
                     Text("Sort: \(model.appliedBrowseOptions.sortColumn) \(model.appliedBrowseOptions.descending ? "↓" : "↑")").font(.caption)
                 }
                 Divider()
-                ResultGrid()
+                ResultGrid(section: .data)
                 Divider()
                 HStack(spacing: 12) {
                     Button("Refresh", systemImage: "arrow.clockwise") { model.refreshData(forceMetadata: true) }
