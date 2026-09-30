@@ -1,16 +1,17 @@
 import SwiftUI
 
 struct ResultGrid: View {
+    var section: WorkspaceSection = .query
     var resultsExpanded: Binding<Bool>? = nil
     @EnvironmentObject private var model: AppModel
     @State private var preview: CellPreview?
     @State private var pendingDelete: Int?
-    private var result: QueryResult { model.result }
+    private var result: QueryResult { section == .data ? model.browseResult : model.queryTabs[model.activeTabIndex].result }
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Label(LocalizedStringKey(model.section == .data ? "Table data" : "Results"), systemImage: "tablecells").font(.headline)
-                if model.section == .query, model.queryTabs[model.activeTabIndex].results.count > 1 {
+                Label(LocalizedStringKey(section == .data ? "Table data" : "Results"), systemImage: "tablecells").font(.headline)
+                if section == .query, model.queryTabs[model.activeTabIndex].results.count > 1 {
                     Menu("Result sets") {
                         ForEach(Array(model.queryTabs[model.activeTabIndex].results.enumerated()), id: \.offset) { index, item in
                             Button("\(index + 1) · \(item.message)") { model.queryTabs[model.activeTabIndex].result = item }
@@ -41,13 +42,13 @@ struct ResultGrid: View {
                 .fixedSize().disabled(result.columns.isEmpty)
             }.padding(.horizontal, 14).frame(height: 30).background(.bar)
             Divider()
-            if model.section == .data, model.browseIsStale {
+            if section == .data, model.browseIsStale {
                 Text("Previous snapshot — refresh required after SQL changes").font(.caption).foregroundStyle(.orange)
             }
-            if let failure = model.section == .data ? model.browseError : model.queryErrors[model.activeTabID] {
+            if let failure = section == .data ? model.browseError : model.queryErrors[model.activeTabID] {
                 Text(failure).font(.caption).foregroundStyle(.red).textSelection(.enabled).padding(6)
             }
-            if model.section == .data, let notice = model.mutationNotice {
+            if section == .data, let notice = model.mutationNotice {
                 Text(notice).font(.caption).foregroundStyle(model.mutationSucceeded ? Color.secondary : Color.orange).textSelection(.enabled)
             }
             if let note = model.resultBudgetNote { Text(note).font(.caption).foregroundStyle(.secondary).padding(6) }
@@ -60,7 +61,7 @@ struct ResultGrid: View {
             if result.isTruncated {
                 Label("Partial preview — copy/export includes only the rows shown", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange).padding(6)
             }
-            if model.section == .query {
+            if section == .query {
                 QueryDataGrid(grid: dataGrid, tabID: model.activeTabID,
                               results: Dictionary(uniqueKeysWithValues: model.queryTabs.map { ($0.id, $0.result.id) }))
                     .overlay { if result.columns.isEmpty { emptyResult } }
@@ -95,19 +96,19 @@ struct ResultGrid: View {
         let snapshot = result
         return DataGrid(
             result: snapshot,
-            gridID: "\(model.connectedProfileID?.uuidString ?? "local")/\(model.section == .data ? model.selectedTable?.id ?? "" : model.activeTabID.uuidString)",
-            primaryKeys: model.section == .data ? model.tableColumns[model.selectedTable?.id ?? "", default: []].filter(\.isPrimaryKey).map(\.name) : [],
+            gridID: "\(model.connectedProfileID?.uuidString ?? "local")/\(section == .data ? model.selectedTable?.id ?? "" : model.activeTabID.uuidString)",
+            primaryKeys: section == .data ? model.tableColumns[model.selectedTable?.id ?? "", default: []].filter(\.isPrimaryKey).map(\.name) : [],
             inspect: { row, column in
                 preview = CellPreview(row: row, column: column, name: snapshot.columns[column], value: snapshot.rows[row][column], isNull: snapshot.isNull(row: row, column: column), deferred: snapshot.deferredColumns.contains(snapshot.columns[column]), binary: snapshot.binaryCells[CellAddress(row: row, column: column)])
             },
-            sort: model.section == .data ? { model.sortData(column: $0) } : nil,
-            quickFilter: model.section == .data ? { row, column in
+            sort: section == .data ? { model.sortData(column: $0) } : nil,
+            quickFilter: section == .data ? { row, column in
                 guard !model.isRunning else { return }
                 model.browseOptions.filterColumn = snapshot.columns[column]
                 model.browseOptions.filterOperator = snapshot.isNull(row: row, column: column) ? .isNull : .equals
                 model.browseOptions.filterValue = snapshot.rows[row][column]; model.refreshData(resetPage: true)
             } : nil,
-            delete: model.canMutateSelectedTable ? { pendingDelete = $0 } : nil)
+            delete: section == .data && model.canMutateSelectedTable ? { pendingDelete = $0 } : nil)
     }
 
 }

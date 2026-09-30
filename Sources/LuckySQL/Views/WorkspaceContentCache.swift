@@ -63,13 +63,7 @@ struct WorkspacePane: View {
             SchemaSidebar()
         } detail: {
             VStack(spacing: 0) {
-                switch model.section {
-                case .query:
-                    QueryWorkspaceView()
-                        .background(SplitLayoutPersistence())
-                case .data: TableBrowserView()
-                case .structure: StructureView()
-                }
+                WorkspaceSectionCache(model: model, section: model.section)
                 Divider()
                 HStack(spacing: 8) {
                     Circle().fill(model.isConnected ? .green : .secondary).frame(width: 6, height: 6)
@@ -88,5 +82,57 @@ struct WorkspacePane: View {
             }
         }
         .environmentObject(model)
+    }
+}
+
+/// Lazily retain each section so warm switches preserve native view identity.
+struct WorkspaceSectionCache: NSViewRepresentable {
+    let model: AppModel
+    let section: WorkspaceSection
+
+    func makeNSView(context: Context) -> WorkspaceSectionContainer { WorkspaceSectionContainer() }
+    func updateNSView(_ view: WorkspaceSectionContainer, context: Context) {
+        view.select(section, model: model)
+    }
+}
+
+@MainActor final class WorkspaceSectionContainer: NSView {
+    private struct Pane {
+        let host: NSHostingView<AnyView>
+        weak var responder: NSView?
+    }
+    private var panes: [WorkspaceSection: Pane] = [:]
+    private var selected: WorkspaceSection?
+
+    func select(_ section: WorkspaceSection, model: AppModel) {
+        guard selected != section else { return }
+        if let selected, let previous = panes[selected] {
+            if let responder = window?.firstResponder as? NSView, responder.isDescendant(of: previous.host) {
+                panes[selected]?.responder = responder
+                (responder as? CodeTextView)?.dismissCompletions()
+                window?.makeFirstResponder(nil)
+            }
+            previous.host.isHidden = true
+        }
+        if panes[section] == nil {
+            let content: AnyView
+            switch section {
+            case .query: content = AnyView(QueryWorkspaceView().background(SplitLayoutPersistence()))
+            case .data: content = AnyView(TableBrowserView())
+            case .structure: content = AnyView(StructureView())
+            }
+            let host = NSHostingView(rootView: AnyView(content.environmentObject(model)))
+            host.sizingOptions = []
+            host.frame = bounds
+            host.autoresizingMask = [.width, .height]
+            addSubview(host)
+            panes[section] = Pane(host: host)
+        }
+        selected = section
+        guard let pane = panes[section] else { return }
+        pane.host.isHidden = false
+        if let responder = pane.responder, !responder.isHiddenOrHasHiddenAncestor {
+            window?.makeFirstResponder(responder)
+        }
     }
 }

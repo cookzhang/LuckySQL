@@ -76,6 +76,70 @@ import XCTest
         XCTAssertFalse(otherEditor.isHiddenOrHasHiddenAncestor)
     }
 
+    func testSectionSwitchRetainsEditorAndIndependentResultGrids() async throws {
+        let suite = "SectionSwitching.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let model = AppModel(profileStore: ProfileStore(defaults: defaults), keychain: SwitchingPasswords(),
+                             workspaceStore: WorkspaceStore(defaults: defaults))
+        model.sql = "SELECT 'draft';"
+        model.queryTabs[0].result = QueryResult(columns: ["sql_result"],
+            rows: (0..<1000).map { [String($0)] }, elapsed: .zero, message: "SQL")
+        let table = DatabaseTable(schema: "shop", name: "orders")
+        model.selectedTable = table
+        model.browseResult = QueryResult(columns: ["table_result"],
+            rows: (0..<1000).map { ["data \($0)"] }, elapsed: .zero, message: "Data")
+        model.browseIsStale = false
+        let host = NSHostingView(rootView: WorkspacePane(model: model, sidebarVisible: .constant(false)))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 700),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close(); model.flushWorkspace(); defaults.removePersistentDomain(forName: suite) }
+        try await settle(host)
+        let cache = try XCTUnwrap(descendants(WorkspaceSectionContainer.self, in: host).first)
+        XCTAssertEqual(cache.subviews.count, 1)
+        let editor = try XCTUnwrap(descendants(CodeTextView.self, in: cache).first)
+        let sqlGrid = try XCTUnwrap(descendants(CopyableTableView.self, in: cache).first)
+        let sqlCoordinator = try XCTUnwrap(sqlGrid.delegate as? DataGrid.Coordinator)
+        let sqlReloads = sqlCoordinator.reloadCount
+        sqlGrid.selectRowIndexes(IndexSet(integer: 30), byExtendingSelection: false)
+        editor.setSelectedRange(NSRange(location: 7, length: 7))
+        window.makeFirstResponder(editor)
+        model.section = .data
+        try await settle(host)
+        XCTAssertTrue(editor.isHiddenOrHasHiddenAncestor)
+        XCTAssertEqual(cache.subviews.count, 2)
+        let dataGrid = try XCTUnwrap(descendants(CopyableTableView.self, in: cache).first { !$0.isHiddenOrHasHiddenAncestor })
+        XCTAssertFalse(dataGrid === sqlGrid)
+        let dataCoordinator = try XCTUnwrap(dataGrid.delegate as? DataGrid.Coordinator)
+        let dataReloads = dataCoordinator.reloadCount
+        dataGrid.selectRowIndexes(IndexSet(integer: 50), byExtendingSelection: false)
+        dataGrid.scrollRowToVisible(200)
+        let dataScroll = dataGrid.enclosingScrollView?.contentView.bounds.minY
+        window.makeFirstResponder(dataGrid)
+        for _ in 0..<3 {
+            model.section = .query
+            try await settle(host)
+            XCTAssertTrue(descendants(CodeTextView.self, in: cache).first === editor)
+            XCTAssertFalse(editor.isHiddenOrHasHiddenAncestor)
+            XCTAssertTrue(window.firstResponder === editor)
+            XCTAssertEqual(editor.selectedRange(), NSRange(location: 7, length: 7))
+            XCTAssertEqual(sqlGrid.selectedRowIndexes, IndexSet(integer: 30))
+            XCTAssertEqual(sqlCoordinator.parent.result.columns, ["sql_result"])
+            model.section = .data
+            try await settle(host)
+            XCTAssertTrue(descendants(CopyableTableView.self, in: cache).first { !$0.isHiddenOrHasHiddenAncestor } === dataGrid)
+            XCTAssertTrue(window.firstResponder === dataGrid)
+            XCTAssertEqual(dataGrid.selectedRowIndexes, IndexSet(integer: 50))
+            XCTAssertEqual(dataGrid.enclosingScrollView?.contentView.bounds.minY, dataScroll)
+            XCTAssertEqual(dataCoordinator.parent.result.columns, ["table_result"])
+        }
+        XCTAssertEqual(sqlCoordinator.reloadCount, sqlReloads)
+        XCTAssertEqual(dataCoordinator.reloadCount, dataReloads)
+        XCTAssertEqual(cache.subviews.count, 2)
+    }
+
     func testBackgroundUpdatesDoNotInvalidateWorkspaceShell() async throws {
         let suite = "WorkspaceObservation.\(UUID())"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
