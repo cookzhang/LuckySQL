@@ -1445,7 +1445,7 @@ extension AppModel {
         guard range.location != NSNotFound, range.location <= old.length,
               range.length <= old.length - range.location else { return false }
         if let editor = editorSessions.views[source.tabID.uuidString]?.documentView as? CodeTextView,
-           editor.string == document.sql {
+           (editor.string as NSString).isEqual(to: document.sql) {
             guard !editor.hasMarkedText() else { return false }
             editor.undoManager?.beginUndoGrouping()
             editor.insertText(text, replacementRange: range)

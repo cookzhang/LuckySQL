@@ -91,6 +91,17 @@ import XCTest
         XCTAssertTrue(fixture.model.isAISuggestionCurrent(databaseSuggestion))
         fixture.model.selectedDatabase = "cafe\u{301}"
         XCTAssertFalse(fixture.model.isAISuggestionCurrent(databaseSuggestion))
+        fixture.model.selectedDatabase = "shop"
+        let latestContext = try await fixture.model.prepareAIContext(action: .generate)
+        let latestSuggestion = try AISuggestion.parse(answer, source: latestContext)
+        let editor = CodeTextView(); editor.string = original
+        let scroll = NSScrollView(); scroll.documentView = editor
+        fixture.model.editorSessions.views[fixture.model.activeTabID.uuidString] = scroll
+        // A native editor that has not caught up must not receive a UTF-16 range
+        // captured from the longer, canonically equal document spelling.
+        XCTAssertTrue(fixture.model.applyAISuggestion(latestSuggestion, replacingSelection: true))
+        XCTAssertEqual(fixture.model.sql, latestSuggestion.sql)
+        XCTAssertTrue((editor.string as NSString).isEqual(to: original))
     }
 
     func testCancelPartialResponseCannotBecomeApplicableOrCancelSQL() async throws {
