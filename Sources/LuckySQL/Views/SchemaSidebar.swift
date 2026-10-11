@@ -1,7 +1,43 @@
+import AppKit
 import SwiftUI
 
 struct SchemaSidebar: View {
     @EnvironmentObject private var model: AppModel
+
+    var body: some View { SchemaSidebarHost(model: model) }
+}
+
+/// Retain one hosting tree so AppModel's unrelated broadcasts stop at the
+/// boundary, while the outline still observes its own metadata and rows.
+private struct SchemaSidebarHost: NSViewRepresentable {
+    let model: AppModel
+
+    func makeNSView(context: Context) -> SchemaSidebarContainer { SchemaSidebarContainer() }
+    func updateNSView(_ view: SchemaSidebarContainer, context: Context) { view.show(model: model) }
+}
+
+@MainActor
+private final class SchemaSidebarContainer: NSView {
+    private var model: AppModel?
+    private var host: NSHostingView<SchemaSidebarContent>?
+
+    func show(model: AppModel) {
+        guard self.model !== model else { return }
+        host?.removeFromSuperview()
+        let state = SchemaSidebarState(model: model)
+        let host = NSHostingView(rootView: SchemaSidebarContent(model: model, state: state))
+        host.sizingOptions = []
+        host.frame = bounds
+        host.autoresizingMask = [.width, .height]
+        addSubview(host)
+        self.model = model
+        self.host = host
+    }
+}
+
+private struct SchemaSidebarContent: View {
+    let model: AppModel
+    @ObservedObject var state: SchemaSidebarState
     @State private var deletingProfile: ConnectionProfile?
     @State private var expandedConnections = Set<UUID>()
     @State private var expandedSchemas = Set<String>()
@@ -12,53 +48,36 @@ struct SchemaSidebar: View {
         VStack(spacing: 0) {
             sidebarSearch
             Divider()
-            List {
-                ForEach(model.profiles) { profile in
-                    DisclosureGroup(isExpanded: connectionExpansion(for: profile)) {
-                        connectionContents(for: profile)
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: connectionIcon(for: profile.id))
-                                .foregroundStyle(connectionColor(for: profile.id))
-                            Text(profile.name)
-                                .lineLimit(1)
-                            Spacer()
-                            Button { model.beginEditConnection(profile.id) } label: { Image(systemName: "pencil") }
-                                .buttonStyle(.plain).help("Edit Connection…").disabled(model.isRunning)
-                            if model.connectingProfileID == profile.id {
-                                ProgressView().controlSize(.small)
-                            }
+            SidebarBusyAppearance(activity: state.activity) {
+                List {
+                    ForEach(state.profiles) { profile in
+                        DisclosureGroup(isExpanded: connectionExpansion(for: profile)) {
+                            connectionContents(for: profile)
+                        } label: {
+                            SchemaConnectionLabel(model: model, profile: profile,
+                                                  isConnected: state.connectedProfileID == profile.id,
+                                                  isConnecting: state.connectingProfileID == profile.id,
+                                                  activity: state.activity)
+                                .contextMenu {
+                                    SchemaConnectionMenu(model: model, profile: profile,
+                                                         isConnected: state.connectedProfileID == profile.id,
+                                                         activity: state.activity) { deletingProfile = profile }
+                                }
                         }
-                    }
-                    .listRowSeparator(.hidden)
-                    .contextMenu {
-                        Button("Connect") { model.requestConnect(to: profile.id) }.disabled(model.connectedProfileID == profile.id)
-                        Button("Edit Connection…") { model.beginEditConnection(profile.id) }.disabled(model.isRunning)
-                        Divider()
-                        Button("Delete Connection…", role: .destructive) { deletingProfile = profile }.disabled(model.isRunning)
+                        .listRowSeparator(.hidden)
                     }
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .listRowSeparator(.hidden)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .listRowSeparator(.hidden)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
             Divider()
-            Button {
-                model.beginNewConnection()
-            } label: {
-                Label("Add Connection…", systemImage: "plus.circle")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(model.isRunning)
-            .padding(.horizontal, 12)
-            .frame(height: 28)
+            SchemaAddConnectionButton(model: model, activity: state.activity)
         }
         .background(Color(nsColor: .windowBackgroundColor))
-        .onAppear { expandConnectedProfile(model.connectedProfileID) }
-        .onChange(of: model.connectedProfileID) { _, profileID in
+        .onAppear { expandConnectedProfile(state.connectedProfileID) }
+        .onChange(of: state.connectedProfileID) { _, profileID in
             expandConnectedProfile(profileID)
         }
         .confirmationDialog("Delete Connection?", isPresented: Binding(get: { deletingProfile != nil }, set: { if !$0 { deletingProfile = nil } })) {
@@ -83,21 +102,21 @@ struct SchemaSidebar: View {
 
     @ViewBuilder
     private func connectionContents(for profile: ConnectionProfile) -> some View {
-        if model.connectingProfileID == profile.id {
+        if state.connectingProfileID == profile.id {
             Label("Connecting…", systemImage: "hourglass")
                 .foregroundStyle(.secondary)
-        } else if model.connectedProfileID == profile.id {
-            switch model.schemaLoadState {
+        } else if state.connectedProfileID == profile.id {
+            switch state.schemaLoadState {
             case .idle, .loading:
                 HStack { ProgressView().controlSize(.small); Text("Loading databases…") }
                     .foregroundStyle(.secondary)
             case .failed(let message):
                 metadataError(message) { Task { await model.loadSchemas() } }
-            case .loaded where model.schemas.isEmpty:
+            case .loaded where state.schemas.isEmpty:
                 Label("No visible databases", systemImage: "eye.slash")
                     .foregroundStyle(.secondary)
             case .loaded:
-                ForEach(model.schemas) { schema in
+                ForEach(state.schemas) { schema in
                     DisclosureGroup(isExpanded: schemaExpansion(for: schema.name)) {
                         tableContents(for: schema)
                     } label: {
@@ -127,10 +146,8 @@ struct SchemaSidebar: View {
             Text("No tables or views")
                 .foregroundStyle(.secondary)
         case .loaded:
-            ForEach(schema.tables.filter { (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search)) && (!favoritesOnly || model.isFavorite($0)) }) { table in
-                SchemaTableRow(model: model, table: table, columns: model.tableColumns[table.id],
-                               isSelected: model.selectedTable == table, isFavorite: model.isFavorite(table),
-                               isRunning: model.isRunning)
+            ForEach(schema.tables.filter { (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search)) && (!favoritesOnly || state.isFavorite($0)) }) { table in
+                ObservedSchemaTableRow(model: model, table: table, activity: state.activity)
             }
         }
     }
@@ -155,7 +172,7 @@ struct SchemaSidebar: View {
             if expanded {
                 guard !model.isRunning else { return }
                 expandedConnections = [profile.id]
-                if model.connectedProfileID != profile.id && model.connectingProfileID != profile.id {
+                if state.connectedProfileID != profile.id && state.connectingProfileID != profile.id {
                     expandedSchemas.removeAll()
                     model.requestConnect(to: profile.id)
                 }
@@ -178,22 +195,99 @@ struct SchemaSidebar: View {
         }
     }
 
-    private func connectionIcon(for id: UUID) -> String {
-        if model.connectedProfileID == id { return "bolt.horizontal.circle.fill" }
-        return "externaldrive.connected.to.line.below"
-    }
-
-    private func connectionColor(for id: UUID) -> Color {
-        model.connectedProfileID == id ? .green : .secondary
-    }
-
     private func expandConnectedProfile(_ profileID: UUID?) {
         guard let profileID else { return }
         expandedConnections = [profileID]
     }
 }
 
-// Keep this disclosure row unwrapped: EquatableView inside the nested List
+private struct SchemaConnectionLabel: View {
+    let model: AppModel
+    let profile: ConnectionProfile
+    let isConnected: Bool
+    let isConnecting: Bool
+    @ObservedObject var activity: SchemaSidebarActivity
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: isConnected ? "bolt.horizontal.circle.fill" : "externaldrive.connected.to.line.below")
+                .foregroundStyle(isConnected ? .green : .secondary)
+            Text(profile.name).lineLimit(1)
+            Spacer()
+            Button { model.beginEditConnection(profile.id) } label: { Image(systemName: "pencil") }
+                .buttonStyle(.plain).help("Edit Connection…").disabled(activity.isRunning)
+            if isConnecting { ProgressView().controlSize(.small) }
+        }
+    }
+}
+
+private struct SchemaConnectionMenu: View {
+    let model: AppModel
+    let profile: ConnectionProfile
+    let isConnected: Bool
+    @ObservedObject var activity: SchemaSidebarActivity
+    let delete: () -> Void
+
+    var body: some View {
+        Button("Connect") { model.requestConnect(to: profile.id) }.disabled(isConnected)
+        Button("Edit Connection…") { model.beginEditConnection(profile.id) }.disabled(activity.isRunning)
+        Divider()
+        Button("Delete Connection…", role: .destructive, action: delete).disabled(activity.isRunning)
+    }
+}
+
+/// Indicate progress without broadcasting availability to every disclosure.
+/// AppModel guards database actions; local menus and scrolling stay available.
+private struct SidebarBusyAppearance<Content: View>: View {
+    @ObservedObject var activity: SchemaSidebarActivity
+    let content: Content
+
+    init(activity: SchemaSidebarActivity, @ViewBuilder content: () -> Content) {
+        self.activity = activity
+        self.content = content()
+    }
+
+    var body: some View { content.opacity(activity.isRunning ? 0.6 : 1) }
+}
+
+private struct SchemaAddConnectionButton: View {
+    let model: AppModel
+    @ObservedObject var activity: SchemaSidebarActivity
+
+    var body: some View {
+        Button { model.beginNewConnection() } label: {
+            Label("Add Connection…", systemImage: "plus.circle")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(activity.isRunning)
+        .padding(.horizontal, 12)
+        .frame(height: 28)
+    }
+}
+
+private struct ObservedSchemaTableRow: View {
+    let model: AppModel
+    let table: DatabaseTable
+    let activity: SchemaSidebarActivity
+    @StateObject private var state: SchemaTableState
+
+    init(model: AppModel, table: DatabaseTable, activity: SchemaSidebarActivity) {
+        self.model = model
+        self.table = table
+        self.activity = activity
+        _state = StateObject(wrappedValue: SchemaTableState(model: model, table: table))
+    }
+
+    var body: some View {
+        SchemaTableRow(model: model, table: table, columns: state.snapshot.columns,
+                       isSelected: state.snapshot.isSelected, isFavorite: state.snapshot.isFavorite,
+                       isRunning: false, activity: activity)
+    }
+}
+
+// Keep this disclosure row free of EquatableView: inside the nested List it
 // can trigger a SwiftUI assertion when asynchronously loaded tables appear.
 struct SchemaTableRow: View {
     let model: AppModel
@@ -202,33 +296,38 @@ struct SchemaTableRow: View {
     let isSelected: Bool
     let isFavorite: Bool
     let isRunning: Bool
+    var activity: SchemaSidebarActivity? = nil
     @State private var isExpanded = false
 
     var body: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
             if isExpanded { tableStructure }
         } label: {
-            HStack {
-                Button { model.selectTable(table) } label: {
-                    Label(table.name, systemImage: isFavorite ? "star.fill" : "tablecells")
-                        .lineLimit(1).truncationMode(.middle)
-                        .foregroundStyle(isSelected ? Color.accentColor : .primary)
-                        .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
-                        .contentShape(Rectangle())
-                }.buttonStyle(.plain).disabled(isRunning).help("Preview \(table.id)")
-                Button("Browse", systemImage: "arrow.right.circle") { model.browse(table) }
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.plain)
-                    .help("Browse rows")
-                    .disabled(isRunning)
-            }
+            tableButtons
         }
         .contextMenu {
-            Button("Preview Data") { model.browse(table) }.disabled(isRunning)
-            Button("Preview Structure") { model.showStructure(table) }.disabled(isRunning)
-            Divider()
-            Button(isFavorite ? "Remove Favorite" : "Add Favorite") { model.toggleFavorite(table) }
-            Button("Copy Qualified Name") { model.copy("`\(table.schema.replacingOccurrences(of: "`", with: "``"))`.`\(table.name.replacingOccurrences(of: "`", with: "``"))`") }
+            if let activity {
+                ObservedSchemaTableMenu(model: model, table: table, isFavorite: isFavorite, activity: activity)
+            } else {
+                SchemaTableMenu(model: model, table: table, isFavorite: isFavorite, isRunning: isRunning)
+            }
+        }
+    }
+
+    private var tableButtons: some View {
+        HStack {
+            Button { model.selectTable(table) } label: {
+                Label(table.name, systemImage: isFavorite ? "star.fill" : "tablecells")
+                    .lineLimit(1).truncationMode(.middle)
+                    .foregroundStyle(isSelected ? Color.accentColor : .primary)
+                    .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+                    .contentShape(Rectangle())
+            }.buttonStyle(.plain).disabled(isRunning).help("Preview \(table.id)")
+            Button("Browse", systemImage: "arrow.right.circle") { model.browse(table) }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.plain)
+                .help("Browse rows")
+                .disabled(isRunning)
         }
     }
 
@@ -257,5 +356,32 @@ struct SchemaTableRow: View {
         if let value = column.defaultValue { parts.append("default \(value)") }
         if !column.extra.isEmpty { parts.append(column.extra) }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// Observe availability at the menu, without rebuilding the disclosure row.
+private struct ObservedSchemaTableMenu: View {
+    let model: AppModel
+    let table: DatabaseTable
+    let isFavorite: Bool
+    @ObservedObject var activity: SchemaSidebarActivity
+
+    var body: some View {
+        SchemaTableMenu(model: model, table: table, isFavorite: isFavorite, isRunning: activity.isRunning)
+    }
+}
+
+private struct SchemaTableMenu: View {
+    let model: AppModel
+    let table: DatabaseTable
+    let isFavorite: Bool
+    let isRunning: Bool
+
+    var body: some View {
+        Button("Preview Data") { model.browse(table) }.disabled(isRunning)
+        Button("Preview Structure") { model.showStructure(table) }.disabled(isRunning)
+        Divider()
+        Button(isFavorite ? "Remove Favorite" : "Add Favorite") { model.toggleFavorite(table) }
+        Button("Copy Qualified Name") { model.copy("`\(table.schema.replacingOccurrences(of: "`", with: "``"))`.`\(table.name.replacingOccurrences(of: "`", with: "``"))`") }
     }
 }

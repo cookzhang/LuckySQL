@@ -66,11 +66,10 @@ struct ResultGrid: View {
                               results: Dictionary(uniqueKeysWithValues: model.queryTabs.map { ($0.id, $0.result.id) }))
                     .overlay { if result.columns.isEmpty { emptyResult } }
                 if !result.columns.isEmpty && result.rows.isEmpty { emptyRows }
-            } else if result.columns.isEmpty {
-                emptyResult
             } else {
-                dataGrid
-                if result.rows.isEmpty {
+                BrowseDataGrid(grid: dataGrid)
+                    .overlay { if result.columns.isEmpty { emptyResult } }
+                if !result.columns.isEmpty && result.rows.isEmpty {
                     emptyRows
                 }
             }

@@ -43,7 +43,13 @@ struct DataGrid: NSViewRepresentable {
         let changed = old.id != result.id
         let changedGrid = coordinator.parent.gridID != gridID
         let selected = changed && !changedGrid ? coordinator.selectedKeys() : []
-        if changedGrid { coordinator.rememberScroll() }
+        if changedGrid {
+            coordinator.rememberScroll()
+            // Rebuilding columns must not save the incoming table's layout
+            // under the outgoing table's autosave name.
+            coordinator.table?.autosaveTableColumns = false
+            coordinator.table?.autosaveName = nil
+        }
         coordinator.parent = self
         if changed || changedGrid { coordinator.reload(selection: changedGrid ? [] : selected, changedGrid: changedGrid) }
         if changedGrid, let table = coordinator.table {
@@ -89,14 +95,36 @@ struct DataGrid: NSViewRepresentable {
                 table.reloadData(forRowIndexes: IndexSet(integersIn: rows.location..<min(table.numberOfRows, NSMaxRange(rows))), columnIndexes: added)
             }
         }
-        func tableViewColumnDidMove(_ notification: Notification) { table?.headerView?.needsDisplay = true; visibleColumns = []; scheduleViewportRefresh() }
+        func tableViewColumnDidMove(_ notification: Notification) { updateDisplayIndices(); table?.headerView?.needsDisplay = true; visibleColumns = []; scheduleViewportRefresh() }
         func tableViewColumnDidResize(_ notification: Notification) { visibleColumns = []; scheduleViewportRefresh() }
         private var columns: [String] = []
+        private var displayIndices: [ObjectIdentifier: Int] = [:]
         private var keyIndices: [Int] = []
         private var displayCache: [CellAddress: (text: String, tooltip: String)] = [:]
         private var copyTask: Task<Void, Never>?
         private static var offsets: [String: NSPoint] = [:]
         init(_ parent: DataGrid) { self.parent = parent }
+        private func updateDisplayIndices() {
+            guard let table else { return }
+            displayIndices = Dictionary(uniqueKeysWithValues: table.tableColumns.enumerated().map { (ObjectIdentifier($0.element), $0.offset) })
+        }
+        /// Drop the outgoing snapshot while keeping the native columns warm.
+        /// The browse host hides the scroll view before calling this method.
+        func suspend() {
+            guard !parent.result.columns.isEmpty || !parent.gridID.isEmpty else { return }
+            rememberScroll()
+            parent = DataGrid(result: .empty)
+            displayCache.removeAll()
+            keyIndices = []
+            copyTask?.cancel(); copyTask = nil
+            guard let table else { return }
+            table.autosaveTableColumns = false
+            table.autosaveName = nil
+            table.deselectAll(nil)
+            (table as? CopyableTableView)?.activeRow = -1
+            reloadCount += 1
+            table.reloadData()
+        }
         func rememberScroll() {
             guard !parent.gridID.isEmpty, let scroll = table?.enclosingScrollView else { return }
             if Self.offsets.count > 64 { Self.offsets.removeAll() }
@@ -126,15 +154,27 @@ struct DataGrid: NSViewRepresentable {
             let restored = Self.offsets[parent.gridID] ?? origin
             if columns != parent.result.columns {
                 columns = parent.result.columns
-                for column in table.tableColumns { table.removeTableColumn(column) }
+                // Reuse native columns by source index when switching tables.
+                // Removing and adding every column repeatedly makes AppKit
+                // recalculate its table geometry for each individual change.
+                let existing = Dictionary(uniqueKeysWithValues: table.tableColumns.map { ($0.identifier, $0) })
+                for column in table.tableColumns {
+                    if let index = Int(column.identifier.rawValue), columns.indices.contains(index) { continue }
+                    table.removeTableColumn(column)
+                }
                 for (index, name) in parent.result.columns.enumerated() {
-                    let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("\(index)"))
+                    let identifier = NSUserInterfaceItemIdentifier("\(index)")
+                    let column = existing[identifier] ?? NSTableColumn(identifier: identifier)
+                    if existing[identifier] == nil { table.addTableColumn(column) }
+                    if let position = table.tableColumns.firstIndex(of: column), position != index {
+                        table.moveColumn(position, toColumn: index)
+                    }
                     column.title = name; column.minWidth = 65; column.maxWidth = 1200
-                    let sample = parent.result.rows.prefix(30).compactMap { $0.indices.contains(index) ? $0[index].prefix(40).count : nil }.max() ?? 0
-                    column.width = CGFloat(min(320, max(100, max(name.count, min(sample, 40)) * 8 + 24)))
-                    table.addTableColumn(column)
+                    let sample = parent.result.rows.prefix(30).compactMap { $0.indices.contains(index) ? $0[index].utf16.prefix(40).count : nil }.max() ?? 0
+                    column.width = CGFloat(min(320, max(100, max(name.utf16.prefix(40).count, sample) * 8 + 24)))
                 }
             }
+            updateDisplayIndices()
             table.reloadData()
             visibleColumns = columnsInViewport(table)
             let selectedKeys = Set(selection)
@@ -153,22 +193,14 @@ struct DataGrid: NSViewRepresentable {
             guard let column = tableColumn.flatMap({ Int($0.identifier.rawValue) }), parent.result.rows.indices.contains(row), parent.result.rows[row].indices.contains(column) else { return nil }
             // NSTableView virtualizes rows but asks for all 40+ columns even
             // when only a few are visible. Avoid offscreen TextKit cell layout.
-            guard let tableColumn, let displayIndex = tableView.tableColumns.firstIndex(of: tableColumn) else { return nil }
+            guard let tableColumn, let displayIndex = displayIndices[ObjectIdentifier(tableColumn)] else { return nil }
             let rect = tableView.rect(ofColumn: displayIndex), visible = tableView.visibleRect
             guard rect.maxX >= visible.minX, rect.minX <= visible.maxX else { return nil }
             visibleCellRequests += 1
             let identifier = NSUserInterfaceItemIdentifier("cell")
-            let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView ?? NSTableCellView()
-            if cell.textField == nil {
-                let text = NSTextField(labelWithString: "")
-                text.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-                text.lineBreakMode = .byTruncatingTail
-                text.maximumNumberOfLines = 1
-                text.usesSingleLineMode = true
-                text.translatesAutoresizingMaskIntoConstraints = false
-                cell.addSubview(text); cell.textField = text; cell.identifier = identifier
-                NSLayoutConstraint.activate([text.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8), text.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8), text.centerYAnchor.constraint(equalTo: cell.centerYAnchor)])
-            }
+            let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? GridTextCellView
+                ?? GridTextCellView(frame: NSRect(x: 0, y: 0, width: tableColumn.width, height: tableView.rowHeight))
+            cell.identifier = identifier
             let value = parent.result.rows[row][column]
             let isNull = parent.result.isNull(row: row, column: column)
             let address = CellAddress(row: row, column: column)
@@ -225,6 +257,47 @@ struct DataGrid: NSViewRepresentable {
             }
         }
         private func copy(_ text: String) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string) }
+    }
+}
+
+/// Result rows have a fixed height, so their labels can be laid out directly
+/// without adding constraints to AppKit's table-wide layout solver.
+private final class GridTextCellView: NSTableCellView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configureText()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureText()
+    }
+
+    private func configureText() {
+        let text = NSTextField(labelWithString: "")
+        text.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        text.lineBreakMode = .byTruncatingTail
+        text.maximumNumberOfLines = 1
+        text.usesSingleLineMode = true
+        addSubview(text)
+        textField = text
+        layoutText()
+    }
+
+    override func layout() {
+        super.layout()
+        layoutText()
+    }
+
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        super.resizeSubviews(withOldSize: oldSize)
+        layoutText()
+    }
+
+    private func layoutText() {
+        let height = min(18, bounds.height)
+        textField?.frame = NSRect(x: 8, y: (bounds.height - height) / 2,
+                                 width: max(0, bounds.width - 16), height: height)
     }
 }
 

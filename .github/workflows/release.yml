@@ -22,7 +22,15 @@ jobs:
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
 
       - name: Run tests
-        run: swift test
+        run: python3 scripts/test-with-timeout.py
+
+      - name: Upload test hang diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-diagnostics
+          path: test-diagnostics/
+          if-no-files-found: ignore
 
       - name: Package Apple Silicon app
         run: ./scripts/package-release.sh "$VERSION"

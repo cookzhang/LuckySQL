@@ -21,7 +21,11 @@ final class AppModel: ObservableObject {
     @Published var queryTabs: [QueryTab]
     @Published var activeTabID: UUID
     @Published var browseResult = QueryResult.empty
-    @Published var browseOptions = TableBrowseOptions()
+    let browseDraft = BrowseDraft()
+    var browseOptions: TableBrowseOptions {
+        get { browseDraft.options }
+        set { browseDraft.options = newValue }
+    }
     @Published var appliedBrowseOptions = TableBrowseOptions()
     @Published var browseIsStale = false
     @Published var browseError: String?
@@ -32,7 +36,7 @@ final class AppModel: ObservableObject {
     private func beginOperation() { operationID = UUID(); cancelRequested = false }
     private func endOperation() { operationID = nil; isCancelling = false }
     var hasPendingFilter: Bool {
-        browseOptions.filterColumn != appliedBrowseOptions.filterColumn || browseOptions.filterOperator != appliedBrowseOptions.filterOperator || browseOptions.filterValue != appliedBrowseOptions.filterValue
+        browseDraft.hasPendingFilter(comparedTo: appliedBrowseOptions)
     }
     @Published var hasNextPage = false
     @Published var structure = TableStructure()
@@ -464,6 +468,7 @@ final class AppModel: ObservableObject {
     }
     func selectTable(_ table: DatabaseTable) {
         guard !isRunning else { return }
+        if section == .data, selectedTable == table, resultTable == table, !browseIsStale { return }
         if section == .structure { showStructure(table) }
         else if section == .data { browse(table) }
         else {
@@ -510,7 +515,7 @@ final class AppModel: ObservableObject {
                 if forceMetadata { structureCache.removeValue(forKey: table.id) }
                 let columns = try await cachedColumns(in: table, force: forceMetadata)
                 guard epoch == connectionAttemptID, previewID == request, !cancelRequested else { return }
-                tableColumns[table.id] = columns
+                if tableColumns[table.id] != columns { tableColumns[table.id] = columns }
                 let query = try browseQuery(for: key, columns: columns)
                 busyStage = NSLocalizedString("Loading table data", comment: "")
                 let rows = try await session.query(query)
