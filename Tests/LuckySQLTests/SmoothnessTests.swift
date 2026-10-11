@@ -92,11 +92,17 @@ final class SmoothnessTests: XCTestCase {
         // Click the blank trailing area of the table label, not its short text.
         let selectionPoint = outline.convert(NSPoint(x: outline.bounds.maxX - 70,
                                                      y: outline.rect(ofRow: 2).midY), to: nil)
-        for type: NSEvent.EventType in [.leftMouseDown, .leftMouseUp] {
-            let click = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: selectionPoint,
+        let clicks = try [NSEvent.EventType.leftMouseDown, .leftMouseUp].map { type in
+            try XCTUnwrap(NSEvent.mouseEvent(with: type, location: selectionPoint,
                 modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                 windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
-            window.sendEvent(click)
+        }
+        // Native row selection tracks mouse-up synchronously on some macOS versions.
+        NSApplication.shared.postEvent(clicks[1], atStart: true)
+        window.sendEvent(clicks[0])
+        if let pending = NSApplication.shared.nextEvent(matching: .leftMouseUp, until: .distantPast,
+                                                        inMode: .default, dequeue: true) {
+            window.sendEvent(pending)
         }
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertEqual(model.selectedTable, table)
