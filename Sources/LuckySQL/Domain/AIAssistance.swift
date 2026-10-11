@@ -57,8 +57,9 @@ struct AIContextSnapshot: Sendable {
 
     func hasSameConversationScope(as other: AIContextSnapshot) -> Bool {
         workspaceID == other.workspaceID && profileID == other.profileID && connectionEpoch == other.connectionEpoch &&
-        tabID == other.tabID && database == other.database && tableNames == other.tableNames &&
-        sourceSQL == other.sourceSQL && queryError == other.queryError && schemaMetadata == other.schemaMetadata && metadataEpoch == other.metadataEpoch
+        tabID == other.tabID && (database as NSString).isEqual(to: other.database) && tableNames == other.tableNames &&
+        (sourceSQL as NSString).isEqual(to: other.sourceSQL) && queryError == other.queryError &&
+        (schemaMetadata as NSString).isEqual(to: other.schemaMetadata) && metadataEpoch == other.metadataEpoch
     }
 }
 

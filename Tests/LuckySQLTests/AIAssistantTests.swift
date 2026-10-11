@@ -70,6 +70,29 @@ import XCTest
         XCTAssertNil(fixture.model.aiAssistant.sessions[original])
     }
 
+    func testCanonicallyEqualUnicodeEditInvalidatesCapturedSQLRange() async throws {
+        let fixture = try await makeFixture(); defer { fixture.cleanUp() }
+        let original = "SELECT 'é' FROM orders;", edited = "SELECT 'e\u{301}' FROM orders;"
+        XCTAssertEqual(original, edited)
+        XCTAssertNotEqual(original.utf16.count, edited.utf16.count)
+        fixture.model.sql = original
+        fixture.model.aiAssistant.session(for: fixture.model.activeTabID).includeSQL = true
+        let context = try await fixture.model.prepareAIContext(action: .generate)
+        let suggestion = try AISuggestion.parse(answer, source: context)
+        fixture.model.sql = edited
+        let changedContext = try await fixture.model.prepareAIContext(action: .generate)
+        XCTAssertFalse(changedContext.hasSameConversationScope(as: context))
+        XCTAssertFalse(fixture.model.isAISuggestionCurrent(suggestion))
+        XCTAssertFalse(fixture.model.applyAISuggestion(suggestion, replacingSelection: true))
+        XCTAssertTrue((fixture.model.sql as NSString).isEqual(to: edited))
+        fixture.model.selectedDatabase = "café"
+        let databaseContext = try await fixture.model.prepareAIContext(action: .generate)
+        let databaseSuggestion = try AISuggestion.parse(answer, source: databaseContext)
+        XCTAssertTrue(fixture.model.isAISuggestionCurrent(databaseSuggestion))
+        fixture.model.selectedDatabase = "cafe\u{301}"
+        XCTAssertFalse(fixture.model.isAISuggestionCurrent(databaseSuggestion))
+    }
+
     func testCancelPartialResponseCannotBecomeApplicableOrCancelSQL() async throws {
         let fixture = try await makeFixture(delay: .seconds(5)); defer { fixture.cleanUp() }
         let id = fixture.model.activeTabID, original = fixture.model.sql

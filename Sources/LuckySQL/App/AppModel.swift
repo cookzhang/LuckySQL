@@ -1336,7 +1336,7 @@ extension AppModel {
     }
 
     func failedQueryForAI() -> AIFailedQuery? {
-        guard let failure = aiFailedQueries[activeTabID], failure.database == selectedDatabase else { return nil }
+        guard let failure = aiFailedQueries[activeTabID], (failure.database as NSString).isEqual(to: selectedDatabase) else { return nil }
         return failure
     }
 
@@ -1365,7 +1365,7 @@ extension AppModel {
         }
         var failure: AIFailedQuery?
         if action == .repair {
-            guard let saved = aiFailedQueries[tab.id], saved.database == database else { throw AIAssistanceError("There is no failed query for this tab and database.") }
+            guard let saved = aiFailedQueries[tab.id], (saved.database as NSString).isEqual(to: database) else { throw AIAssistanceError("There is no failed query for this tab and database.") }
             sourceSQL = saved.sql; selection = saved.selection; failure = saved
         }
         guard action == .generate || !sourceSQL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -1432,7 +1432,7 @@ extension AppModel {
         return source.workspaceID == aiWorkspaceID && source.profileID == connectedProfileID &&
             source.connectionEpoch == connectionAttemptID && source.tabID == activeTabID &&
             source.metadataEpoch == aiMetadataEpoch &&
-            source.database == selectedDatabase && queryTabs[activeTabIndex].document.revision == source.documentRevision
+            (source.database as NSString).isEqual(to: selectedDatabase) && queryTabs[activeTabIndex].document.revision == source.documentRevision
     }
 
     @discardableResult func applyAISuggestion(_ suggestion: AISuggestion, replacingSelection: Bool) -> Bool {
