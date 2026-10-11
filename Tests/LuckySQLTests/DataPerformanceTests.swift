@@ -397,11 +397,20 @@ import XCTest
             let frame = try XCTUnwrap(button.value(forKey: "accessibilityFrame") as? NSValue).rectValue
             let window = try XCTUnwrap(view.window)
             let point = window.convertPoint(fromScreen: NSPoint(x: frame.midX, y: frame.midY))
-            for type: NSEvent.EventType in [.leftMouseDown, .leftMouseUp] {
-                let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
-                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-                    context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
-                window.sendEvent(event)
+            let down = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+            let up = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 1, pressure: 0))
+            // macOS 15 native buttons synchronously track until mouse-up inside
+            // sendEvent(down). Queue the release first so that loop can finish.
+            NSApplication.shared.postEvent(up, atStart: true)
+            window.sendEvent(down)
+            // Newer SwiftUI buttons return immediately instead of tracking.
+            if let pending = NSApplication.shared.nextEvent(matching: .leftMouseUp, until: .distantPast,
+                                                             inMode: .default, dequeue: true) {
+                window.sendEvent(pending)
             }
         }
     }
