@@ -1,6 +1,31 @@
 import Combine
 import Foundation
 
+/// Bridge native list selection to the accepted model selection. Keep this
+/// separate from metadata so selecting a row does not rebuild the hierarchy.
+@MainActor
+final class SchemaTableSelection: ObservableObject {
+    @Published private(set) var table: DatabaseTable?
+    private let model: AppModel
+    private var subscription: AnyCancellable?
+
+    init(model: AppModel) {
+        self.model = model
+        table = model.selectedTable
+        subscription = model.$selectedTable.removeDuplicates().dropFirst().sink { [weak self] in
+            self?.table = $0
+        }
+    }
+
+    func select(_ table: DatabaseTable?) {
+        // Filtering/collapsing the outline may hide the selected row; that
+        // must not discard the table currently displayed in the workspace.
+        if let table { model.selectTable(table) }
+        // Keep the binding anchored to the selection accepted by the model.
+        self.table = model.selectedTable
+    }
+}
+
 /// Only metadata that changes the outline's hierarchy belongs to this object.
 /// Query results, filter drafts and table selection must not rebuild the List.
 @MainActor

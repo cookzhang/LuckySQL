@@ -17,7 +17,7 @@ struct TableBrowserView: View {
                 HStack(spacing: 12) {
                     Button("Refresh", systemImage: "arrow.clockwise") { model.refreshData(forceMetadata: true) }
                     Button("Edit / New Row…", systemImage: "square.and.pencil") { model.showGridChanges = true }
-                    Text(model.canMutateSelectedTable ? "Enter: preview · ⌘C: cell · ⇧⌘C: rows" : "Read-only: protected connection, partial result or no usable primary key")
+                    Text(model.canMutateSelectedTable ? "Enter: preview · ⌘C: selection · Esc: clear" : "Read-only: protected connection, partial result or no usable primary key")
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     Spacer()
                     BrowsePageControls(model: model, draft: model.browseDraft,

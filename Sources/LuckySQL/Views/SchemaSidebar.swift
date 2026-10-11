@@ -49,7 +49,7 @@ private struct SchemaSidebarContent: View {
             sidebarSearch
             Divider()
             SidebarBusyAppearance(activity: state.activity) {
-                List {
+                SidebarTableList(model: model, activity: state.activity) {
                     ForEach(state.profiles) { profile in
                         DisclosureGroup(isExpanded: connectionExpansion(for: profile)) {
                             connectionContents(for: profile)
@@ -148,6 +148,7 @@ private struct SchemaSidebarContent: View {
         case .loaded:
             ForEach(schema.tables.filter { (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search)) && (!favoritesOnly || state.isFavorite($0)) }) { table in
                 ObservedSchemaTableRow(model: model, table: table, activity: state.activity)
+                    .tag(table)
             }
         }
     }
@@ -198,6 +199,26 @@ private struct SchemaSidebarContent: View {
     private func expandConnectedProfile(_ profileID: UUID?) {
         guard let profileID else { return }
         expandedConnections = [profileID]
+    }
+}
+
+/// Selection invalidates only this List boundary, not the metadata tree used
+/// to build its content. AppKit supplies full-row highlighting and navigation.
+private struct SidebarTableList<Content: View>: View {
+    @StateObject private var selection: SchemaTableSelection
+    @ObservedObject var activity: SchemaSidebarActivity
+    let content: Content
+
+    init(model: AppModel, activity: SchemaSidebarActivity, @ViewBuilder content: () -> Content) {
+        _selection = StateObject(wrappedValue: SchemaTableSelection(model: model))
+        self.activity = activity
+        self.content = content()
+    }
+
+    var body: some View {
+        List(selection: Binding(get: { selection.table }, set: { selection.select($0) })) {
+            content.selectionDisabled(activity.isRunning)
+        }
     }
 }
 
@@ -303,7 +324,11 @@ struct SchemaTableRow: View {
         DisclosureGroup(isExpanded: $isExpanded) {
             if isExpanded { tableStructure }
         } label: {
-            tableButtons
+            Label(table.name, systemImage: isFavorite ? "star.fill" : "tablecells")
+                .lineLimit(1).truncationMode(.middle)
+                .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+                .contentShape(Rectangle())
+                .help(table.id)
         }
         .contextMenu {
             if let activity {
@@ -311,23 +336,6 @@ struct SchemaTableRow: View {
             } else {
                 SchemaTableMenu(model: model, table: table, isFavorite: isFavorite, isRunning: isRunning)
             }
-        }
-    }
-
-    private var tableButtons: some View {
-        HStack {
-            Button { model.selectTable(table) } label: {
-                Label(table.name, systemImage: isFavorite ? "star.fill" : "tablecells")
-                    .lineLimit(1).truncationMode(.middle)
-                    .foregroundStyle(isSelected ? Color.accentColor : .primary)
-                    .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
-                    .contentShape(Rectangle())
-            }.buttonStyle(.plain).disabled(isRunning).help("Preview \(table.id)")
-            Button("Browse", systemImage: "arrow.right.circle") { model.browse(table) }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.plain)
-                .help("Browse rows")
-                .disabled(isRunning)
         }
     }
 
@@ -343,10 +351,12 @@ struct SchemaTableRow: View {
                     Text(column.dataType).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     if column.isNullable { Text("NULL").font(.caption2).foregroundStyle(.tertiary) }
                 }
+                .selectionDisabled()
                 .help(columnHelp(column))
             }
         } else {
             HStack { ProgressView().controlSize(.small); Text("Loading columns…") }
+                .selectionDisabled()
                 .task { await model.loadColumns(in: table) }
         }
     }

@@ -78,8 +78,7 @@ import Combine
     }
     func open(_ profile: ConnectionProfile) {
         if let entry = entries.first(where: { ($0.model.connectedProfileID ?? $0.model.connectingProfileID ?? $0.model.selectedProfileID) == profile.id }) {
-            selectedID = entry.id
-            if !entry.model.isConnected && !entry.model.isRunning { entry.model.requestConnect() }
+            select(entry.id)
             return
         }
         let model = makeModel(WorkspaceStore(defaults: defaults, namespace: profile.id.uuidString))
@@ -87,6 +86,15 @@ import Combine
         let id = UUID(); entries.append(Entry(id: id, model: model, namespace: profile.id.uuidString)); selectedID = id
         configure(model)
         model.requestConnect()
+    }
+    /// A connection tab activates its own session, including restored tabs that
+    /// have a saved profile but no live connection yet.
+    func select(_ id: UUID) {
+        guard let entry = entries.first(where: { $0.id == id }) else { return }
+        selectedID = id
+        guard !entry.model.isConnected, !entry.model.isRunning,
+              entry.model.connectionDraft == nil else { return }
+        entry.model.requestConnect()
     }
     func newWorkspace() {
         let id = UUID(), namespace = UUID().uuidString
@@ -122,7 +130,7 @@ struct ConnectionWorkspacesView: View {
                     HStack(spacing: 0) {
                         ForEach(workspaces.entries) { entry in
                             WorkspaceConnectionTab(model: entry.model, selected: workspaces.selectedID == entry.id,
-                                                   select: { workspaces.selectedID = entry.id },
+                                                   select: { workspaces.select(entry.id) },
                                                    close: { if entry.model.gridChanges.isEmpty { workspaces.close(entry.id) } else { pendingClose = entry.id } }, canClose: workspaces.entries.count > 1)
                                 .id(entry.id)
                         }

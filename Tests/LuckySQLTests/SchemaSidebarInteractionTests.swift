@@ -4,6 +4,111 @@ import XCTest
 @testable import LuckySQL
 
 @MainActor final class SchemaSidebarInteractionTests: XCTestCase {
+    func testNativeSelectionKeyboardAndExternalNavigationStayInSync() async throws {
+        let suite = "LuckySQLTableSelection.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let session = SidebarInteractionSession(names: ["customers", "orders", "products"])
+        let profiles = ProfileStore(defaults: defaults)
+        profiles.save([ConnectionProfile(name: "Selection fixture", database: "shop")])
+        let model = AppModel(profileStore: profiles, keychain: SidebarInteractionPasswords(),
+                             driver: SidebarInteractionDriver(session: session),
+                             workspaceStore: WorkspaceStore(defaults: defaults))
+        let host = NSHostingView(rootView: SchemaSidebar().environmentObject(model))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 600),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer {
+            window.close(); model.isRunning = false; model.disconnect(); model.flushWorkspace()
+            defaults.removePersistentDomain(forName: suite)
+        }
+        model.connect()
+        try await waitUntil { !model.isRunning && model.schemaLoadState == .loaded }
+        try await settle(host)
+        let outline = try XCTUnwrap(findOutline(in: host))
+        outline.expandItem(outline.item(atRow: 1))
+        try await waitUntil { model.schemas.first?.tableLoadState == .loaded }
+        try await settle(host)
+        XCTAssertEqual(outline.numberOfRows, 5)
+        window.makeFirstResponder(outline)
+        outline.selectRowIndexes(IndexSet(integer: 2), byExtendingSelection: false)
+        try await settle(host)
+        XCTAssertEqual(model.selectedTable?.name, "customers")
+        XCTAssertEqual(model.section, .query)
+        var reads = await session.reads
+        XCTAssertEqual(reads.queries, 0)
+        XCTAssertEqual(reads.columns, 0)
+
+        let down = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+            context: nil, characters: "\u{F701}", charactersIgnoringModifiers: "\u{F701}",
+            isARepeat: false, keyCode: 125))
+        outline.keyDown(with: down)
+        try await settle(host)
+        XCTAssertEqual(model.selectedTable?.name, "orders")
+        XCTAssertEqual(outline.selectedRow, 3)
+
+        model.changeSection(.data)
+        try await waitUntil { !model.isRunning }
+        try await settle(host)
+        outline.keyDown(with: down)
+        try await waitUntil { !model.isRunning && model.selectedTable?.name == "products" }
+        try await settle(host)
+        XCTAssertEqual(model.section, .data)
+        XCTAssertEqual(model.browseResult.rows, [["1"]])
+        reads = await session.reads
+        XCTAssertEqual(reads.queries, 2)
+        outline.selectRowIndexes(IndexSet(integer: 4), byExtendingSelection: false)
+        try await settle(host)
+        let afterReselect = await session.reads
+        XCTAssertEqual(afterReselect.queries, reads.queries)
+
+        model.isRunning = true
+        try await settle(host)
+        let up = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+            context: nil, characters: "\u{F700}", charactersIgnoringModifiers: "\u{F700}",
+            isARepeat: false, keyCode: 126))
+        outline.keyDown(with: up)
+        try await settle(host)
+        XCTAssertEqual(model.selectedTable?.name, "products")
+        XCTAssertEqual(outline.selectedRow, 4, "Rejected selections must keep the highlight on the displayed table")
+        model.isRunning = false
+        model.browse(DatabaseTable(schema: "shop", name: "customers"))
+        try await waitUntil { !model.isRunning }
+        try await settle(host)
+        XCTAssertEqual(outline.selectedRow, 2, "Navigation outside the list must update the native selection")
+        XCTAssertTrue(findOutline(in: host) === outline)
+        outline.keyDown(with: up)
+        try await settle(host)
+        XCTAssertEqual(outline.selectedRow, 2, "Connection and database headings are not table selections")
+
+        model.showStructure()
+        try await waitUntil { !model.isRunning }
+        try await settle(host)
+        let beforeStructureSwitch = await session.reads.queries
+        outline.keyDown(with: down)
+        try await waitUntil { !model.isRunning && model.selectedTable?.name == "orders" }
+        try await settle(host)
+        XCTAssertEqual(model.section, .structure)
+        let afterStructureSwitch = await session.reads.queries
+        XCTAssertEqual(afterStructureSwitch, beforeStructureSwitch, "Structure navigation must not fetch table data")
+        outline.expandItem(outline.item(atRow: 3))
+        try await settle(host)
+        XCTAssertEqual(outline.numberOfRows, 6)
+        outline.keyDown(with: down)
+        try await waitUntil { !model.isRunning && model.selectedTable?.name == "products" }
+        try await settle(host)
+        XCTAssertEqual(outline.selectedRow, 5, "Keyboard navigation must skip expanded column details")
+        outline.collapseItem(outline.item(atRow: 1))
+        try await settle(host)
+        XCTAssertEqual(model.selectedTable?.name, "products", "Hiding rows must retain the displayed table")
+        outline.expandItem(outline.item(atRow: 1))
+        try await settle(host)
+        XCTAssertEqual(outline.selectedRow, 5)
+    }
+
     func testBusyTableContextMenuKeepsLocalActionsAvailable() async throws {
         let suite = "LuckySQLSidebarInteraction.\(UUID())"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -122,16 +227,19 @@ private actor SidebarInteractionPasswords: PasswordStoring {
 }
 
 private actor SidebarInteractionSession: DatabaseSession {
+    let names: [String]
+    init(names: [String] = ["orders"]) { self.names = names }
     var reads = (queries: 0, columns: 0)
     func query(_ sql: String) -> QueryResult {
         reads.queries += 1
         return QueryResult(columns: ["id"], rows: [["1"]], elapsed: .zero, message: "Fixture")
     }
     func schemas() -> [String] { ["shop"] }
-    func tables(in schema: String) -> [String] { ["orders"] }
+    func tables(in schema: String) -> [String] { names }
     func columns(in table: DatabaseTable) -> [LuckySQL.TableColumn] {
         reads.columns += 1
-        return []
+        return [TableColumn(name: "id", dataType: "int", isNullable: false, isPrimaryKey: true,
+                            defaultValue: nil, extra: "")]
     }
     func close() {}
 }

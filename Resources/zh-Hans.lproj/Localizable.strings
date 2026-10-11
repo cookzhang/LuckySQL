@@ -167,6 +167,7 @@
 "Preview / Edit Value…" = "预览 / 编辑单元格…";
 "Copy Value" = "复制单元格";
 "Copy Selected Rows (TSV)" = "复制选中行（TSV）";
+"Enter: preview · ⌘C: selection · Esc: clear" = "回车：预览 · ⌘C：复制选中内容 · Esc：清除选择";
 "Filter by This Value" = "按此值筛选";
 "Delete Row…" = "删除行…";
 "Loading table metadata" = "正在加载表元数据";

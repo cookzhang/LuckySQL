@@ -135,9 +135,13 @@ Language follows macOS app language preferences. There is no in-app language swi
 | ⌘P | Find table across visible databases |
 | ⌘. | Cancel current SQL, browse or metadata operation |
 | ⌘1 / ⌘2 / ⌘3 | SQL / Data / Structure workspace |
+| ↑ / ↓ in the table sidebar | Select the previous / next table, keeping the current workspace section |
 | ← / → in a result grid | Move the active cell column |
-| ⌘C / ⇧⌘C in a result grid | Copy cell / selected rows in displayed column order |
+| ⌘C / ⇧⌘C in a result grid | Copy the active cell (or selected rows when multiple rows are selected) / copy rows in displayed column order |
+| Esc in a result grid | Clear the selection |
 | Return / Space in a result grid | Preview full cell value |
+
+The table sidebar uses full-row selection. Click a table or use the arrow keys to update the current Data or Structure view; selecting a table in SQL keeps the editor open. Expanding a table shows its columns without switching tables. Right-click a table for explicit Data / Structure navigation and local actions.
 
 Column metadata requests are coalesced and cached, and structure views reuse their last snapshot. Refresh explicitly reloads metadata; successful write statements invalidate caches. Refresh after external schema changes. Read-only protection is a conservative client guard, **not a database permission sandbox**; use a read-only server account for enforcement. Generated columns and incomplete previews remain protected; the typed batch editor uses raw binary values.
 

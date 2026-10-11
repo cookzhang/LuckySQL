@@ -231,6 +231,10 @@ struct DataGrid: NSViewRepresentable {
             menu.removeAllItems()
             guard cell != nil else { return }
             func item(_ title: String, _ action: Selector) { let item = menu.addItem(withTitle: NSLocalizedString(title, comment: ""), action: action, keyEquivalent: ""); item.target = self }
+            if (table?.numberOfSelectedRows ?? 0) > 1 {
+                item("Copy Selected Rows (TSV)", #selector(copyRows))
+                return
+            }
             if parent.inspect != nil { item("Preview / Edit Value…", #selector(preview)) }
             item("Copy Value", #selector(copyValue)); item("Copy Selected Rows (TSV)", #selector(copyRows))
             if parent.quickFilter != nil { item("Filter by This Value", #selector(filter)) }
@@ -324,6 +328,7 @@ final class CopyableTableView: NSTableView {
     var previewCell: (() -> Void)?
     var activeColumn = 0 { didSet { invalidateCell(column: oldValue, row: activeRow); invalidateCell(column: activeColumn, row: activeRow) } }
     var activeRow = -1 { didSet { invalidateCell(column: activeColumn, row: oldValue); invalidateCell(column: activeColumn, row: activeRow) } }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     private func invalidateCell(column: Int, row: Int) {
         guard tableColumns.indices.contains(column), row >= 0, row < numberOfRows else { return }
         setNeedsDisplay(frameOfCell(atColumn: column, row: row))
@@ -344,8 +349,13 @@ final class CopyableTableView: NSTableView {
     }
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
-        activeColumn = max(0, column(at: point))
         let row = row(at: point)
+        guard row >= 0, row < numberOfRows else { return nil }
+        window?.makeFirstResponder(self)
+        // A context click must not discard an existing multi-row selection.
+        // Its menu offers selection-wide actions instead of editing one row.
+        if numberOfSelectedRows > 1 { return super.menu(for: event) }
+        activeColumn = max(0, column(at: point))
         activeRow = row
         if row >= 0, !selectedRowIndexes.contains(row) { selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false) }
         return super.menu(for: event)
@@ -358,10 +368,26 @@ final class CopyableTableView: NSTableView {
         let path = NSBezierPath(rect: frameOfCell(atColumn: activeColumn, row: row).insetBy(dx: 1, dy: 1)); path.lineWidth = 2; path.stroke()
     }
     override func keyDown(with event: NSEvent) {
-        if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "c" { if event.modifierFlags.contains(.shift) { copyRows?() } else { copyCell?() }; return }
+        if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "c" {
+            if event.modifierFlags.contains(.shift) || numberOfSelectedRows > 1 { copyRows?() }
+            else { copyCell?() }
+            return
+        }
+        if event.keyCode == 53 { deselectAll(nil); activeRow = -1; return }
         if event.keyCode == 123 || event.keyCode == 124 { activeColumn = max(0, min(tableColumns.count - 1, activeColumn + (event.keyCode == 123 ? -1 : 1))); scrollColumnToVisible(activeColumn); return }
-        if event.keyCode == 36 || event.keyCode == 49 { previewCell?(); return }
+        if event.keyCode == 36 || event.keyCode == 76 || event.keyCode == 49 {
+            if numberOfSelectedRows == 1 { previewCell?() }
+            return
+        }
+        let previousRow = selectedRowIndexes.contains(activeRow) ? activeRow : selectedRow
         super.keyDown(with: event)
-        activeRow = selectedRow
+        if event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
+           event.modifierFlags.contains(.shift), previousRow >= 0,
+           event.keyCode == 125 || event.keyCode == 126 {
+            let next = max(0, min(numberOfRows - 1, previousRow + (event.keyCode == 125 ? 1 : -1)))
+            activeRow = selectedRowIndexes.contains(next) ? next : selectedRow
+        } else {
+            activeRow = selectedRow
+        }
     }
 }
