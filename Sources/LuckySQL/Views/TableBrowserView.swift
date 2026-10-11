@@ -5,35 +5,9 @@ struct TableBrowserView: View {
     var body: some View {
         if let table = model.selectedTable {
             VStack(spacing: 0) {
-                HStack(spacing: 10) {
-                    Image(systemName: "line.3.horizontal.decrease").foregroundStyle(.secondary)
-                    Picker("Column", selection: $model.browseOptions.filterColumn) {
-                        Text("All rows").tag("")
-                        ForEach(model.tableColumns[table.id] ?? []) { Text($0.name).tag($0.name) }
-                    }.labelsHidden().frame(width: 150)
-                    Picker("Operator", selection: $model.browseOptions.filterOperator) {
-                        ForEach(FilterOperator.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                    }.labelsHidden().frame(width: 100).disabled(model.browseOptions.filterColumn.isEmpty)
-                    TextField("Filter value", text: $model.browseOptions.filterValue).textFieldStyle(.roundedBorder).frame(maxWidth: 260)
-                        .disabled(model.browseOptions.filterColumn.isEmpty || !model.browseOptions.filterOperator.needsValue)
-                        .onSubmit { model.refreshData(resetPage: true) }
-                    Menu("Columns") {
-                        Button("All columns") { model.browseOptions.selectedColumns = []; model.refreshData(resetPage: true) }
-                        ForEach(model.tableColumns[table.id] ?? []) { column in
-                            Toggle(column.name, isOn: Binding(get: {
-                                model.browseOptions.selectedColumns.isEmpty || model.browseOptions.selectedColumns.contains(column.name) || column.isPrimaryKey
-                            }, set: { selected in
-                                if model.browseOptions.selectedColumns.isEmpty { model.browseOptions.selectedColumns = Set((model.tableColumns[table.id] ?? []).map(\.name)) }
-                                if selected { model.browseOptions.selectedColumns.insert(column.name) }
-                                else { model.browseOptions.selectedColumns.remove(column.name) }
-                                model.refreshData(resetPage: true)
-                            })).disabled(column.isPrimaryKey)
-                        }
-                    }.fixedSize()
-                    Button("Apply") { model.refreshData(resetPage: true) }
-                    Button("Reset") { model.browseOptions.filterColumn = ""; model.browseOptions.filterValue = ""; model.refreshData(resetPage: true) }
-                }.controlSize(.small).padding(12).disabled(model.isRunning)
-                if model.hasPendingFilter { Text("Filter changes not applied").font(.caption).foregroundStyle(.orange) }
+                BrowseFilterBar(model: model, draft: model.browseDraft,
+                                columns: model.tableColumns[table.id] ?? [],
+                                appliedOptions: model.appliedBrowseOptions, isRunning: model.isRunning)
                 if !model.appliedBrowseOptions.sortColumn.isEmpty {
                     Text("Sort: \(model.appliedBrowseOptions.sortColumn) \(model.appliedBrowseOptions.descending ? "↓" : "↑")").font(.caption)
                 }
@@ -46,15 +20,66 @@ struct TableBrowserView: View {
                     Text(model.canMutateSelectedTable ? "Enter: preview · ⌘C: cell · ⇧⌘C: rows" : "Read-only: protected connection, partial result or no usable primary key")
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     Spacer()
-                    Picker("Rows", selection: $model.browseOptions.pageSize) { Text("100").tag(100); Text("200").tag(200); Text("500").tag(500) }.frame(width: 110)
-                        .onChange(of: model.browseOptions.pageSize) { _, _ in model.refreshData(resetPage: true) }
-                    Button { model.nextPage(-1) } label: { Image(systemName: "chevron.left") }.disabled(model.browseOptions.page == 0).help("Previous page")
-                    Text("Page \(model.appliedBrowseOptions.page + 1)").font(.caption).monospacedDigit()
-                    Button { model.nextPage(1) } label: { Image(systemName: "chevron.right") }.disabled(!model.hasNextPage).help("Next page")
+                    BrowsePageControls(model: model, draft: model.browseDraft,
+                                       appliedPage: model.appliedBrowseOptions.page, hasNextPage: model.hasNextPage)
                 }.controlSize(.small).padding(12).disabled(model.isRunning)
             }
         } else {
             ContentUnavailableView("Choose a table", systemImage: "tablecells", description: Text("Click a table in the sidebar to preview data without replacing your SQL drafts."))
+        }
+    }
+}
+
+private struct BrowseFilterBar: View {
+    let model: AppModel
+    @ObservedObject var draft: BrowseDraft
+    let columns: [TableColumn]
+    let appliedOptions: TableBrowseOptions
+    let isRunning: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "line.3.horizontal.decrease").foregroundStyle(.secondary)
+                BrowseFilterColumnPicker(columns: columns.map(\.name), selection: $draft.options.filterColumn)
+                    .frame(width: 150)
+                Picker("Operator", selection: $draft.options.filterOperator) {
+                    ForEach(FilterOperator.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                }.labelsHidden().frame(width: 100).disabled(draft.options.filterColumn.isEmpty)
+                TextField("Filter value", text: $draft.options.filterValue).textFieldStyle(.roundedBorder).frame(maxWidth: 260)
+                    .disabled(draft.options.filterColumn.isEmpty || !draft.options.filterOperator.needsValue)
+                    .onSubmit { model.refreshData(resetPage: true) }
+                BrowseVisibleColumnsMenu(columns: columns, selection: $draft.options.selectedColumns) {
+                    model.refreshData(resetPage: true)
+                }.fixedSize()
+                Button("Apply") { model.refreshData(resetPage: true) }
+                Button("Reset") { draft.options.filterColumn = ""; draft.options.filterValue = ""; model.refreshData(resetPage: true) }
+            }.controlSize(.small).padding(12).disabled(isRunning)
+            if draft.hasPendingFilter(comparedTo: appliedOptions) {
+                Text("Filter changes not applied").font(.caption).foregroundStyle(.orange)
+            }
+        }
+    }
+}
+
+private struct BrowsePageControls: View {
+    let model: AppModel
+    @ObservedObject var draft: BrowseDraft
+    let appliedPage: Int
+    let hasNextPage: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // Only a user's picker change starts a request. Restoring another
+            // table's saved page size must not launch a second refresh.
+            Picker("Rows", selection: Binding(get: { draft.options.pageSize }, set: { size in
+                guard draft.options.pageSize != size else { return }
+                draft.options.pageSize = size
+                model.refreshData(resetPage: true)
+            })) { Text("100").tag(100); Text("200").tag(200); Text("500").tag(500) }.frame(width: 110)
+            Button { model.nextPage(-1) } label: { Image(systemName: "chevron.left") }.disabled(draft.options.page == 0).help("Previous page")
+            Text("Page \(appliedPage + 1)").font(.caption).monospacedDigit()
+            Button { model.nextPage(1) } label: { Image(systemName: "chevron.right") }.disabled(!hasNextPage).help("Next page")
         }
     }
 }
