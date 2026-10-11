@@ -17,6 +17,13 @@ jobs:
       - name: Select Xcode
         run: sudo xcode-select --switch /Applications/Xcode_16.4.app/Contents/Developer
       - name: Run regression tests
-        run: swift test
+        run: python3 scripts/test-with-timeout.py
+      - name: Upload test hang diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-diagnostics
+          path: test-diagnostics/
+          if-no-files-found: ignore
       - name: Compile optimized application
         run: swift build -c release --arch arm64
