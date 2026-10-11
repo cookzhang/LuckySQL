@@ -75,6 +75,7 @@ struct ContentView: View {
         .sheet(isPresented: $model.showTransfer) { DataTransferView() }
         .sheet(isPresented: $model.showHistory) { QueryHistoryView() }
         .sheet(isPresented: $model.showTableFinder) { TableFinderView() }
+        .sheet(isPresented: $model.showAIConfiguration) { AIConfigurationView(store: .shared) }
         .sheet(isPresented: Binding(get: { model.pendingSQL != nil }, set: { if !$0 { model.cancelExecution() } })) {
             VStack(alignment: .leading, spacing: 16) {
                 Label("Review before executing", systemImage: "exclamationmark.triangle.fill").font(.title2).foregroundStyle(.orange)

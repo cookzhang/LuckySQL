@@ -46,7 +46,16 @@ struct ResultGrid: View {
                 Text("Previous snapshot — refresh required after SQL changes").font(.caption).foregroundStyle(.orange)
             }
             if let failure = section == .data ? model.browseError : model.queryErrors[model.activeTabID] {
-                Text(failure).font(.caption).foregroundStyle(.red).textSelection(.enabled).padding(6)
+                HStack(alignment: .top, spacing: 8) {
+                    Text(failure).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+                    Spacer(minLength: 4)
+                    if section == .query, model.failedQueryForAI() != nil {
+                        Button("Repair with AI…", systemImage: "sparkles") {
+                            model.openAIAssistance(action: .repair)
+                        }
+                        .controlSize(.small).disabled(model.isRunning)
+                    }
+                }.padding(6)
             }
             if section == .data, let notice = model.mutationNotice {
                 Text(notice).font(.caption).foregroundStyle(model.mutationSucceeded ? Color.secondary : Color.orange).textSelection(.enabled)

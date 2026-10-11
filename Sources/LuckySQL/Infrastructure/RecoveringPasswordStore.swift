@@ -6,10 +6,11 @@ import Security
 actor RecoveringPasswordStore: PasswordStoring {
     private let store: any PasswordStoring
     private let defaults: UserDefaults
-    init(store: any PasswordStoring = KeychainStore(), defaults: UserDefaults? = nil) {
-        self.store = store; self.defaults = defaults ?? .standard
+    private let keyPrefix: String
+    init(store: any PasswordStoring = KeychainStore(), defaults: UserDefaults? = nil, keyPrefix: String = "passwordRecord.") {
+        self.store = store; self.defaults = defaults ?? .standard; self.keyPrefix = keyPrefix
     }
-    private func key(_ id: UUID) -> String { "passwordRecord.\(id.uuidString)" }
+    private func key(_ id: UUID) -> String { "\(keyPrefix)\(id.uuidString)" }
     private func record(_ id: UUID) -> UUID {
         defaults.string(forKey: key(id)).flatMap(UUID.init(uuidString:)) ?? id
     }

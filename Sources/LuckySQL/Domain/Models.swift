@@ -145,7 +145,8 @@ struct QueryTab: Identifiable {
 /// High-frequency editor state never publishes a workspace-wide change.
 /// Selection is native editor state; observing it would redraw on every arrow key.
 final class QueryDocument: ObservableObject {
-    @Published var sql: String
+    @Published var sql: String { didSet { if sql != oldValue { revision &+= 1 } } }
+    private(set) var revision = 0
     @Published var savedSQL: String?
     @Published var lineCount = 1
     var selection = NSRange(location: 0, length: 0)

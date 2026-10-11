@@ -48,6 +48,16 @@ Draft/history JSON serialization uses an ordered background queue with an explic
 
 After an idle delay, one generated next-page SELECT may use a separate reusable idle connection. It never borrows the foreground transaction connection, changes busy/error UI, or delays execution in its queue. Cancellation closes the speculative connection; epoch/generation guards reject stale results. Prefetch is disabled after any user SQL until reconnect, because arbitrary SQL can change transaction/session/temporary-table semantics. Drivers may decline speculative connections. Foreground metadata remains serialized on the original connection; background metadata discovery yields before scheduling further work when a query starts.
 
+### AI assistance
+
+`AIAssistantModel` owns an in-memory `AIAssistantSession` for each query tab. Streaming publishes only to the assistant panel. `AIProviding` accepts immutable prompt messages and yields text; `AIHTTPClient` implements OpenAI Chat Completions and Anthropic Messages SSE with distinct request/header adapters, bounded decoding, explicit completion markers and cancellation. It has no database port or tools. Redirects, cookies and stored URL credentials are disabled; network/provider errors never include response bodies or credentials.
+
+`AppModel.prepareAIContext` freezes the workspace/profile/connection epoch, database, document revision and replacement range. It reuses schema caches or reads metadata through the existing serialized session. Metadata includes column types/comments, indexes, foreign keys and server/session settings, but omits preview rows, column defaults, DDL and database credentials. Generation sends SQL only when opted in; explain and repair require explicit SQL inclusion. Repair preserves the exact failed statement/error. Foreground execution and explicit schema refresh invalidate the metadata epoch and stop unfinished context gathering without cancelling database commands.
+
+Only a complete, valid structured response becomes `AISuggestion`. Explain responses cannot supply replacement SQL. Applying a suggestion checks the original workspace, connection, database, tab and document/metadata revisions, then either opens a draft or replaces the captured range using the native editor's undo manager. Execution stays entirely in the existing SQL review path. Conversation history is bounded and scoped to the provider, endpoint/model and transmitted schema/SQL; scope and retained messages change together even on failure, so retries cannot restore excluded context. Closing a tab, clearing its conversation, or changing connections cancels and clears its assistant state.
+
+`AIConfigurationStore` persists independent OpenAI/Anthropic URL/model metadata in UserDefaults. Keys use a separate Keychain service and record namespace. URL changes require new credentials; saves are serialized against other saves and credential reads, with a revision guard against delayed old reads. Secure-storage failures keep the entered key in process memory with an explicit session-only notice. The configuration sheet's connection test sends only a minimal text request.
+
 ## Extension seams
 
 - **PostgreSQL:** add `PostgresDriver`/`PostgresSession`, then add an engine discriminator and driver registry.

@@ -44,6 +44,13 @@ final class AppModel: ObservableObject {
     @Published var history: [QueryHistoryEntry]
     @Published var favorites: Set<String>
     @Published var showHistory = false
+    let aiAssistant: AIAssistantModel
+    private let aiWorkspaceID = UUID()
+    @Published var showAIAssistant = false
+    @Published var showAIConfiguration = false
+    private var aiFailedQueries: [UUID: AIFailedQuery] = [:]
+    private var aiServerInfo: (version: String, mode: String, timeZone: String)?
+    private var aiMetadataEpoch = UUID()
     @Published var isConnected = false
     @Published var isRunning = false {
         didSet { if isRunning && !oldValue { busySince = Date() }; if !isRunning { busySince = nil; busyStage = "" } }
@@ -108,11 +115,12 @@ final class AppModel: ObservableObject {
     private var allowsBrowsePrefetch = true
     private var previewCredentials: (profile: ConnectionProfile, password: String)?
 
-    init(profileStore: ProfileStore? = nil, keychain: PasswordStoring = RecoveringPasswordStore(), driver: any DatabaseDriver = MySQLDriver(), workspaceStore: WorkspaceStore? = nil) {
+    init(profileStore: ProfileStore? = nil, keychain: PasswordStoring = RecoveringPasswordStore(), driver: any DatabaseDriver = MySQLDriver(), workspaceStore: WorkspaceStore? = nil, aiAssistant: AIAssistantModel? = nil) {
         let profileStore = profileStore ?? ProfileStore()
         let workspaceStore = workspaceStore ?? WorkspaceStore()
         self.profileStore = profileStore; self.workspaceStore = workspaceStore
         self.keychain = keychain; self.driver = driver
+        self.aiAssistant = aiAssistant ?? AIAssistantModel()
         let savedProfiles = profileStore.load()
         profiles = savedProfiles; selectedProfileID = savedProfiles.first?.id
         let saved = workspaceStore.loadTabs()
@@ -233,6 +241,7 @@ final class AppModel: ObservableObject {
     }
     func closeTab(_ id: UUID) {
         guard !isRunning else { return }
+        aiAssistant.remove(tabID: id); aiFailedQueries.removeValue(forKey: id)
         queryTabs.removeAll { $0.id == id }
         editorSessions.remove(id)
         if queryTabs.isEmpty { queryTabs = [QueryTab(title: "Query 1", sql: "", database: selectedDatabase)] }
@@ -326,6 +335,7 @@ final class AppModel: ObservableObject {
         guard !isRunning else { return }
         if let profileID { selectProfile(profileID) }
         guard let profile = selectedProfile else { return }
+        aiAssistant.invalidateConnection(); aiServerInfo = nil; aiFailedQueries = [:]
         let attemptID = UUID(); connectionAttemptID = attemptID
         connectingProfileID = profile.id; connectedProfileID = nil
         isConnected = false; isRunning = true; errorMessage = nil
@@ -372,6 +382,7 @@ final class AppModel: ObservableObject {
         }
     }
     func disconnect() {
+        aiAssistant.invalidateConnection(); aiServerInfo = nil; aiFailedQueries = [:]
         connectionTask?.cancel(); connectionTask = nil
         transferTask?.cancel(); transferTask = nil
         let transfer = transferSession; transferSession = nil; Task { await transfer?.cancel() }
@@ -394,6 +405,7 @@ final class AppModel: ObservableObject {
         for index in queryTabs.indices { queryTabs[index].result = .empty; queryTabs[index].results = [] }
     }
     func loadSchemas() async {
+        invalidateAIMetadata()
         let ownsOperation = operationID == nil
         if ownsOperation { isRunning = true; beginOperation() }
         let operation = operationID
@@ -415,6 +427,7 @@ final class AppModel: ObservableObject {
         } catch { if epoch == connectionAttemptID { schemaLoadState = .failed(error.localizedDescription); show(error) } }
     }
     func loadTables(in schema: String, force: Bool = false) async {
+        if force { invalidateAIMetadata() }
         guard let index = schemas.firstIndex(where: { $0.name == schema }) else { return }
         if !force, schemas[index].tableLoadState == .loaded || schemas[index].tableLoadState == .loading { return }
         let ownsOperation = operationID == nil
@@ -437,6 +450,7 @@ final class AppModel: ObservableObject {
         }
     }
     func loadColumns(in table: DatabaseTable, force: Bool = false) async {
+        if force { invalidateAIMetadata() }
         if !force, tableColumns[table.id] != nil { return }
         let ownsOperation = operationID == nil
         if ownsOperation { isRunning = true; beginOperation() }
@@ -487,6 +501,7 @@ final class AppModel: ObservableObject {
     }
     func refreshData(resetPage: Bool = false, forceMetadata: Bool = false, useCache: Bool = false) {
         guard !isRunning, let table = selectedTable else { return }
+        if forceMetadata { invalidateAIMetadata() }
         if resetPage { browseOptions.page = 0 }
         stopPrefetch(keepIdle: true)
         if !useCache || forceMetadata { browsePages.removeAll() }
@@ -633,6 +648,7 @@ final class AppModel: ObservableObject {
         refreshData(resetPage: true)
     }
     func showStructure(_ table: DatabaseTable? = nil, force: Bool = false) {
+        if force { invalidateAIMetadata() }
         guard !isRunning else { return }
         if let table, table != selectedTable {
             if let previous = resultTable { tableBrowseOptions[previous] = appliedBrowseOptions }
@@ -718,11 +734,17 @@ final class AppModel: ObservableObject {
         // From this point keep browsing on its original connection until reconnect.
         invalidateBrowsePages(); allowsBrowsePrefetch = false
         guard !isRunning, isConnected else { return }
+        aiServerInfo = nil; invalidateAIMetadata()
         isRunning = true; errorMessage = nil
         beginOperation(); queryErrors.removeValue(forKey: request.tabID); executingTabID = request.tabID; busyStage = NSLocalizedString("Preparing query", comment: "")
         let epoch = connectionAttemptID
         let connectionName = profiles.first { $0.id == connectedProfileID }?.name ?? ""
+        let originalDocument = queryTabs.first(where: { $0.id == request.tabID })?.document
+        let originalRevision = originalDocument?.revision ?? 0
+        let originalSQL = originalDocument?.sql ?? ""
+        aiFailedQueries.removeValue(forKey: request.tabID)
         Task {
+            var failedStatement = request.sql
             defer {
                 if epoch == connectionAttemptID {
                     if cancelRequested { record(request.sql, database: request.database, connection: connectionName, outcome: "Cancellation requested · batch stopped; committed writes are not rolled back") }
@@ -736,6 +758,7 @@ final class AppModel: ObservableObject {
                 var receivedResult = false
                 for (number, statement) in statements.enumerated() {
                     guard epoch == connectionAttemptID, !cancelRequested else { return }
+                    failedStatement = statement.sql
                     busyStage = String(format: NSLocalizedString("Executing statement %ld/%ld · previous result retained until ready", comment: ""), number + 1, statements.count)
                     let result: QueryResult
                     if let parameters = request.parameters { result = try await session.parameterized(statement.sql, parameters: parameters, shouldCancel: { await MainActor.run { self.cancelRequested || epoch != self.connectionAttemptID } }) }
@@ -755,6 +778,17 @@ final class AppModel: ObservableObject {
             } catch {
                 if epoch == connectionAttemptID {
                     queryErrors[request.tabID] = cancelRequested ? "Query cancelled; previous results retained." : error.localizedDescription
+                    if !cancelRequested {
+                        let original = originalSQL as NSString
+                        let range = original.range(of: failedStatement)
+                        let unambiguous: NSRange
+                        if range.location != NSNotFound,
+                           original.range(of: failedStatement, options: [], range: NSRange(location: NSMaxRange(range), length: original.length - NSMaxRange(range))).location == NSNotFound {
+                            unambiguous = range
+                        } else { unambiguous = NSRange(location: NSNotFound, length: 0) }
+                        aiFailedQueries[request.tabID] = AIFailedQuery(sql: failedStatement, error: error.localizedDescription,
+                            database: request.database, tabID: request.tabID, documentRevision: originalRevision, selection: unambiguous)
+                    }
                     if !cancelRequested { record(request.sql, database: request.database, connection: connectionName, outcome: "Error: \(error.localizedDescription)"); show(error) }
                 }
             }
@@ -921,6 +955,7 @@ final class AppModel: ObservableObject {
     }
     private func qualified(_ table: DatabaseTable) throws -> String { "\(try SQLIdentifier.quote(table.schema)).\(try SQLIdentifier.quote(table.name))" }
     func executeSchemaChange(_ sql: String, preceding: [String] = []) async throws {
+        invalidateAIMetadata()
         guard !isRunning, !isReadOnly, isConnected else { throw UpdateFailure("Connect with a writable account and wait for other operations.") }
         isRunning = true; beginOperation()
         let epoch = connectionAttemptID
@@ -1289,6 +1324,139 @@ final class AppModel: ObservableObject {
             do { try await Task.detached(priority: .utility) { try (json ? ResultExport.json(value) : ResultExport.csv(value)).write(to: url, atomically: true, encoding: .utf8) }.value }
             catch { show(error) }
         }
+    }
+}
+
+extension AppModel {
+    private func invalidateAIMetadata() {
+        aiMetadataEpoch = UUID()
+        // Foreground database work takes priority. Cancel only context gathering,
+        // never a database command or a response already streaming from AI.
+        aiAssistant.cancelContextRequests()
+    }
+
+    func failedQueryForAI() -> AIFailedQuery? {
+        guard let failure = aiFailedQueries[activeTabID], failure.database == selectedDatabase else { return nil }
+        return failure
+    }
+
+    func startAIAssistance(action: AIAssistantAction, prompt: String, includeSQL: Bool = true) {
+        showAIAssistant = true; section = .query
+        let tabID = activeTabID, assistantSession = aiAssistant.session(for: tabID)
+        guard !assistantSession.isRunning else { return }
+        assistantSession.action = action; assistantSession.includeSQL = includeSQL
+        aiAssistant.start(tabID: tabID, action: action, prompt: prompt) { [weak self] in
+            guard let self, self.activeTabID == tabID else { throw AIAssistanceError("The query tab changed before the request started. Try again.") }
+            return try await self.prepareAIContext(action: action)
+        }
+    }
+
+    func prepareAIContext(action: AIAssistantAction) async throws -> AIContextSnapshot {
+        let tab = queryTabs[activeTabIndex], epoch = connectionAttemptID, profileID = connectedProfileID, metadataEpoch = aiMetadataEpoch
+        let database = selectedDatabase, revision = tab.document.revision
+        let includeSQL = aiAssistant.session(for: tab.id).includeSQL
+        guard action == .generate || includeSQL else { throw AIAssistanceError("Include SQL to explain or repair this statement.") }
+        var sourceSQL = includeSQL ? SQLTools.executable(tab.sql, selection: tab.selection) : ""
+        var selection = tab.selection
+        if includeSQL, selection.length == 0 {
+            let statements = SQLTools.statements(tab.sql)
+            selection = statements.first(where: { tab.selection.location < NSMaxRange($0.range) })?.range
+                ?? statements.last?.range ?? tab.selection
+        }
+        var failure: AIFailedQuery?
+        if action == .repair {
+            guard let saved = aiFailedQueries[tab.id], saved.database == database else { throw AIAssistanceError("There is no failed query for this tab and database.") }
+            sourceSQL = saved.sql; selection = saved.selection; failure = saved
+        }
+        guard action == .generate || !sourceSQL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw AIAssistanceError("Select a SQL statement first.")
+        }
+        guard sourceSQL.utf8.count <= 64 * 1024 else { throw AIAssistanceError("AI context is too large. Select fewer tables or a smaller SQL statement.") }
+        var selected: [DatabaseTable] = []
+        if let table = selectedTable { selected.append(table) }
+        for reference in SQLCompletion.references(sourceSQL, database: database) where !selected.contains(reference.table) {
+            selected.append(reference.table)
+        }
+        guard selected.count <= 12 else { throw AIAssistanceError("Choose at most 12 tables for an AI request.") }
+        var notes: [String] = []
+        func checkConnection() throws {
+            try Task.checkCancellation()
+            guard connectionAttemptID == epoch, connectedProfileID == profileID, aiMetadataEpoch == metadataEpoch,
+                  queryTabs.contains(where: { $0.id == tab.id }) else {
+                throw AIAssistanceError("The connection or query tab changed. Start a new AI request.")
+            }
+        }
+        // Metadata uses the existing serialized session. It never selects table rows.
+        if aiServerInfo == nil, isConnected, !isRunning {
+            do {
+                let info = try await requireSession().query("SELECT VERSION() AS version, @@session.sql_mode AS sql_mode, @@session.time_zone AS time_zone;")
+                try checkConnection()
+                if let row = info.rows.first, row.count >= 3 {
+                    aiServerInfo = (String(row[0].prefix(512)), String(row[1].prefix(1024)), String(row[2].prefix(128)))
+                }
+            } catch {
+                try checkConnection()
+                notes.append(NSLocalizedString("Server version and session settings could not be refreshed.", comment: ""))
+            }
+        }
+        var structures: [(DatabaseTable, TableStructure)] = []
+        for table in selected {
+            try checkConnection()
+            if let cached = structureCache[table.id] { structures.append((table, cached)); continue }
+            if isConnected, !isRunning {
+                do {
+                    let details = try await requireSession().structure(in: table)
+                    try checkConnection()
+                    structureCache[table.id] = details; tableColumns[table.id] = details.columns
+                    structures.append((table, details)); continue
+                } catch { try checkConnection() }
+            }
+            if let columns = tableColumns[table.id] { structures.append((table, TableStructure(columns: columns))) }
+            else { notes.append(String(format: NSLocalizedString("Structure unavailable for %@; do not invent its columns.", comment: ""), table.id)) }
+        }
+        try checkConnection()
+        if aiServerInfo == nil { notes.append(NSLocalizedString("Server version is unknown. Use conservative MySQL syntax.", comment: "")) }
+        let info = aiServerInfo
+        return AIContextSnapshot(workspaceID: aiWorkspaceID, profileID: profileID, connectionEpoch: epoch,
+            tabID: tab.id, documentRevision: failure?.documentRevision ?? revision, database: database,
+            tableNames: structures.map { $0.0.id }, sourceSQL: sourceSQL, selection: selection,
+            schemaMetadata: try AIContextBuilder.schemaMetadata(structures),
+            metadataEpoch: metadataEpoch,
+            connectionName: profiles.first(where: { $0.id == profileID })?.name ?? "",
+            serverVersion: info?.version ?? "", sqlMode: info?.mode ?? "", timeZone: info?.timeZone ?? "",
+            queryError: failure?.error, notes: notes)
+    }
+
+    func isAISuggestionCurrent(_ suggestion: AISuggestion) -> Bool {
+        let source = suggestion.source
+        return source.workspaceID == aiWorkspaceID && source.profileID == connectedProfileID &&
+            source.connectionEpoch == connectionAttemptID && source.tabID == activeTabID &&
+            source.metadataEpoch == aiMetadataEpoch &&
+            source.database == selectedDatabase && queryTabs[activeTabIndex].document.revision == source.documentRevision
+    }
+
+    @discardableResult func applyAISuggestion(_ suggestion: AISuggestion, replacingSelection: Bool) -> Bool {
+        guard isAISuggestionCurrent(suggestion), let text = suggestion.sql, !text.isEmpty else { return false }
+        if !replacingSelection {
+            newQuery(sql: text, title: NSLocalizedString("AI Query", comment: "")); return true
+        }
+        let source = suggestion.source, document = queryTabs[activeTabIndex].document
+        let old = document.sql as NSString, range = source.selection
+        guard range.location != NSNotFound, range.location <= old.length,
+              range.length <= old.length - range.location else { return false }
+        if let editor = editorSessions.views[source.tabID.uuidString]?.documentView as? CodeTextView,
+           editor.string == document.sql {
+            guard !editor.hasMarkedText() else { return false }
+            editor.undoManager?.beginUndoGrouping()
+            editor.insertText(text, replacementRange: range)
+            editor.undoManager?.setActionName(NSLocalizedString("Apply AI Suggestion", comment: ""))
+            editor.undoManager?.endUndoGrouping()
+            updateSQL(editor.string, in: source.tabID); document.selection = editor.selectedRange()
+        } else {
+            updateSQL(old.replacingCharacters(in: range, with: text), in: source.tabID)
+            document.selection = NSRange(location: range.location + (text as NSString).length, length: 0)
+        }
+        return true
     }
 }
 

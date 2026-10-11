@@ -39,41 +39,19 @@ struct EditorView: View {
                 Button { model.newQuery() } label: { Image(systemName: "plus") }.buttonStyle(.borderless).padding(.horizontal, 12).help("New query (⌘T)")
             }.background(.bar)
             Divider()
-            HStack(spacing: 8) {
-                if model.canCancelOperation {
-                    Button("Cancel", systemImage: "stop.circle") { model.cancelCurrentQuery() }
-                } else {
-                    Menu {
-                        Button("Run Selection / Current Statement") { model.runCurrentQuery() }
-                        Button("Run with Parameters…") { parametersSQL = SQLTools.executable(model.sql, selection: model.sqlSelection) }
-                        Button("Run All Statements") { model.runCurrentQuery(all: true) }
-                    } label: { Label("Run", systemImage: "play.fill") }
-                    .fixedSize().disabled(!model.isConnected || model.isRunning)
-                }
-                Picker("Database", selection: $model.selectedDatabase) {
-                    Text("No database").tag("")
-                    if !model.selectedDatabase.isEmpty && !model.schemas.contains(where: { $0.name == model.selectedDatabase }) { Text(model.selectedDatabase).tag(model.selectedDatabase) }
-                    ForEach(model.schemas) { Text($0.name).tag($0.name) }
-                }.frame(maxWidth: 220).disabled(model.isRunning)
-                Button("Format", systemImage: "text.alignleft") { model.formatSQL() }.help("Format SQL keywords and clauses")
-                Button("Explain", systemImage: "list.bullet.indent") { model.explainQuery() }.disabled(!model.isConnected || model.isRunning)
-                Menu("Snippets") {
-                    Button("SELECT from selected table") { model.insertWhereTemplate() }.disabled(model.selectedTable == nil)
-                    Button("INSERT into selected table") { model.generateInsert() }.disabled(model.selectedTable == nil)
-                    Button("New table template") { model.newQuery(sql: "CREATE TABLE `new_table` (\n  `id` BIGINT NOT NULL AUTO_INCREMENT,\n  `name` VARCHAR(255) NOT NULL,\n  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  PRIMARY KEY (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;", title: "Create table") }
-                }.fixedSize()
-                Spacer()
-                Menu("Text") {
-                    Button("Larger SQL Text") { fontSize = min(24, fontSize + 1) }
-                    Button("Smaller SQL Text") { fontSize = max(10, fontSize - 1) }
-                    Button("Default Size (13)") { fontSize = 13 }
-                }.fixedSize()
-                Button("History", systemImage: "clock.arrow.circlepath") { model.showHistory = true }
-            }.controlSize(.small).padding(.horizontal, 12).frame(height: 38)
+            ViewThatFits(in: .horizontal) {
+                fullToolbar.fixedSize(horizontal: true, vertical: false)
+                compactToolbar
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .controlSize(.small).padding(.horizontal, 12).frame(height: 38)
             Divider()
             QueryDocumentEditor(model: model, document: model.queryTabs[model.activeTabIndex].document, id: model.activeTabID)
             HStack {
-                Text("⌘↩ Run   ⇧⌘↩ All   ⌃Space / ⌥Esc Complete   ⌘F Find")
+                ViewThatFits(in: .horizontal) {
+                    Text("⌘↩ Run   ⇧⌘↩ All   ⌘K AI   ⌃Space / ⌥Esc Complete   ⌘F Find")
+                    Text("⌘↩ Run   ⌘K AI   ⌘F Find")
+                }
                 Spacer()
                 QueryLineCount(document: model.queryTabs[model.activeTabIndex].document)
             }.font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 12).frame(height: 18).background(.bar)
@@ -94,6 +72,92 @@ struct EditorView: View {
             Button("Cancel", role: .cancel) { model.renamingTab = nil }
             Button("Save") { if let id = model.renamingTab { model.renameTab(id, title: rename) }; model.renamingTab = nil }
         }
+    }
+
+    private var fullToolbar: some View {
+        HStack(spacing: 8) {
+            runControl
+            databasePicker.frame(maxWidth: 220)
+            Button("Format", systemImage: "text.alignleft") { model.formatSQL() }.help("Format SQL keywords and clauses")
+            Button("Explain", systemImage: "list.bullet.indent") { model.explainQuery() }.disabled(!model.isConnected || model.isRunning)
+            snippetsMenu
+            aiMenu
+            textMenu
+            Button("History", systemImage: "clock.arrow.circlepath") { model.showHistory = true }
+        }
+    }
+
+    private var compactToolbar: some View {
+        HStack(spacing: 8) {
+            runControl
+            aiMenu
+            databasePicker.labelsHidden().frame(width: 110)
+            Spacer(minLength: 0)
+            Menu {
+                Button("Format SQL") { model.formatSQL() }
+                Button("Explain Current Statement") { model.explainQuery() }.disabled(!model.isConnected || model.isRunning)
+                snippetsMenu
+                textMenu
+                Button("Query History") { model.showHistory = true }
+            } label: { Label("SQL Tools", systemImage: "ellipsis.circle").labelStyle(.iconOnly) }
+            .fixedSize().help("SQL Tools")
+        }
+    }
+
+    @ViewBuilder
+    private var runControl: some View {
+        if model.canCancelOperation {
+            Button("Cancel", systemImage: "stop.circle") { model.cancelCurrentQuery() }
+        } else {
+            Menu {
+                Button("Run Selection / Current Statement") { model.runCurrentQuery() }
+                Button("Run with Parameters…") { parametersSQL = SQLTools.executable(model.sql, selection: model.sqlSelection) }
+                Button("Run All Statements") { model.runCurrentQuery(all: true) }
+            } label: { Label("Run", systemImage: "play.fill") }
+            .fixedSize().disabled(!model.isConnected || model.isRunning)
+        }
+    }
+
+    private var databasePicker: some View {
+        Picker("Database", selection: $model.selectedDatabase) {
+            Text("No database").tag("")
+            if !model.selectedDatabase.isEmpty && !model.schemas.contains(where: { $0.name == model.selectedDatabase }) { Text(model.selectedDatabase).tag(model.selectedDatabase) }
+            ForEach(model.schemas) { Text($0.name).tag($0.name) }
+        }.disabled(model.isRunning)
+    }
+
+    private var aiMenu: some View {
+        Menu {
+            Button(LocalizedStringKey(model.showAIAssistant ? "Hide AI Assistant" : "Show AI Assistant")) {
+                if model.showAIAssistant { model.showAIAssistant = false }
+                else { model.openAIAssistance(action: .generate) }
+            }
+            Divider()
+            Button("Generate Query…") { model.openAIAssistance(action: .generate) }
+            Button("Explain Selection / Current SQL…") { model.openAIAssistance(action: .explain) }
+                .disabled(model.sql.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("Repair Failed Query…") { model.openAIAssistance(action: .repair) }
+                .disabled(model.failedQueryForAI() == nil)
+            Divider()
+            Button("AI Configuration…") { model.showAIConfiguration = true }
+        } label: { Label("AI", systemImage: "sparkles") }
+        .fixedSize().help("AI Assistant (⌘K)")
+    }
+
+    private var snippetsMenu: some View {
+        Menu("Snippets") {
+            Button("SELECT from selected table") { model.insertWhereTemplate() }.disabled(model.selectedTable == nil)
+            Button("INSERT into selected table") { model.generateInsert() }.disabled(model.selectedTable == nil)
+            Button("New table template") { model.newQuery(sql: "CREATE TABLE `new_table` (\n  `id` BIGINT NOT NULL AUTO_INCREMENT,\n  `name` VARCHAR(255) NOT NULL,\n  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  PRIMARY KEY (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;", title: "Create table") }
+        }.fixedSize()
+    }
+
+    private var textMenu: some View {
+        Menu("Text") {
+            Button("Larger SQL Text") { fontSize = min(24, fontSize + 1) }
+            Button("Smaller SQL Text") { fontSize = max(10, fontSize - 1) }
+            Button("Default Size (13)") { fontSize = 13 }
+        }.fixedSize()
     }
 }
 

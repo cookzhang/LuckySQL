@@ -21,6 +21,23 @@ struct LuckySQLApp: App {
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") { updater.check() }.disabled(updater.busy)
             }
+            CommandGroup(after: .appSettings) {
+                Button("AI Configuration…") { model.showAIConfiguration = true }
+            }
+            CommandMenu("AI") {
+                Button(LocalizedStringKey(model.showAIAssistant ? "Hide AI Assistant" : "Show AI Assistant")) {
+                    if model.showAIAssistant { model.showAIAssistant = false }
+                    else { model.openAIAssistance(action: .generate) }
+                }.keyboardShortcut("k", modifiers: .command)
+                Divider()
+                Button("Generate Query…") { model.openAIAssistance(action: .generate) }
+                Button("Explain SQL…") { model.openAIAssistance(action: .explain) }
+                    .disabled(model.sql.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button("Repair Failed Query…") { model.openAIAssistance(action: .repair) }
+                    .disabled(model.failedQueryForAI() == nil)
+                Divider()
+                Button("AI Configuration…") { model.showAIConfiguration = true }
+            }
             CommandGroup(after: .newItem) {
                 Button("New Connection Workspace") { workspaces.newWorkspace() }
                 Button("Add Connection…") { model.beginNewConnection() }.keyboardShortcut("n", modifiers: [.command, .shift]).disabled(model.isRunning)
