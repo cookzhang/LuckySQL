@@ -11,6 +11,7 @@ LuckySQL is a free, open-source, native macOS MySQL workbench built with Swift a
 - Color-coded SQL editor with line numbers, native find, automatic keyword/schema/table/alias-column suggestions (**Control–Space** or **Option–Escape** opens suggestions; **Tab/Return** accepts, **Escape** dismisses), and basic formatting
 - Multiple auto-saved query drafts; **Command–Return** runs the selection/current statement, **Shift–Command–Return** runs all statements
 - Local query history, SQL files, snippets, EXPLAIN, and server information shortcuts
+- Per-query AI assistant for generating, explaining and repairing SQL, with configurable OpenAI/Anthropic-compatible endpoints and Keychain-stored API keys
 - Native virtualized result grid with resizable columns, keyboard selection, copying, and full cell previews
 - Table-data workspace with server-side filters, sorting, and 100/200/500-row pagination, without replacing SQL drafts
 - Structure workspace with columns, indexes, foreign keys, comments, and syntax-colored CREATE SQL
@@ -84,12 +85,20 @@ The integration test also verifies the 1,000-row server-side limit, smaller expl
 To create a distributable Apple Silicon app bundle locally:
 
 ```sh
-./scripts/package-release.sh 0.4.0
+./scripts/package-release.sh 0.5.0
 ```
 
 The archive and its SHA-256 checksum are written to `dist/`.
 
 Enable TLS in Advanced for remote connections. TLS verifies the trust chain and requested server identity and never silently downgrades. SSH uses system OpenSSH, strict known-host verification, an agent/identity file or a Keychain-stored secret. Query deadlines close the session; transaction state is lost and writes are never automatically replayed.
+
+## AI assistant
+
+Choose **LuckySQL → AI Configuration…** (or the assistant's gear button). Select the **OpenAI** or **Anthropic** protocol and enter **Base URL**, **API Key**, and **Model**. Each protocol keeps its own configuration. Base URL accepts a service root, `/v1` base, or full `/chat/completions` or `/messages` endpoint; remote services require HTTPS, and local loopback services can use HTTP. Changing the endpoint requires entering its key again. **Test Connection** sends a small request to the configured model and may incur a provider charge.
+
+Open **AI Assistant** in the editor or press **⌘K**. Generate a query from the selected table's structure, explain the current selection/statement, or choose **Repair with AI…** on a failed query. Opening the panel does not send a request. Review the SQL/error disclosure and click **Send to AI**. Requests include selected/referenced schema metadata and server version/session settings; row previews and database credentials are excluded. SQL is optional for generation and required for explanation/repair, so literals and query errors may be sent when included.
+
+Completed suggestions can be copied, opened in a new query, or used to replace the original selection with one undoable edit. They never execute automatically; normal read-only protection and execution confirmation still apply. Editing the source draft, changing connections/databases, executing SQL, or refreshing schema metadata makes old suggestions inapplicable. Stop cancels only the AI request. Conversations remain in memory per query tab and can be cleared; closing a tab or changing its connection clears them. If Keychain cannot save the key, LuckySQL explicitly retains it only for the current app session.
 
 ## Project layout
 
@@ -133,6 +142,7 @@ Language follows macOS app language preferences. There is no in-app language swi
 | ⌘T / ⌘W | New / close query tab (unsaved drafts require confirmation) |
 | ⇧⌘[ / ⇧⌘] | Previous / next query tab |
 | ⌘P | Find table across visible databases |
+| ⌘K | Show / hide the AI assistant |
 | ⌘. | Cancel current SQL, browse or metadata operation |
 | ⌘1 / ⌘2 / ⌘3 | SQL / Data / Structure workspace |
 | ↑ / ↓ in the table sidebar | Select the previous / next table, keeping the current workspace section |

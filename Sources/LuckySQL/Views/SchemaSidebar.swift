@@ -390,6 +390,11 @@ private struct SchemaTableMenu: View {
     var body: some View {
         Button("Preview Data") { model.browse(table) }.disabled(isRunning)
         Button("Preview Structure") { model.showStructure(table) }.disabled(isRunning)
+        Button("Generate Query with AI…", systemImage: "sparkles") {
+            model.selectedDatabase = table.schema
+            model.selectedTable = table
+            model.openAIAssistance(action: .generate)
+        }.disabled(isRunning)
         Divider()
         Button(isFavorite ? "Remove Favorite" : "Add Favorite") { model.toggleFavorite(table) }
         Button("Copy Qualified Name") { model.copy("`\(table.schema.replacingOccurrences(of: "`", with: "``"))`.`\(table.name.replacingOccurrences(of: "`", with: "``"))`") }

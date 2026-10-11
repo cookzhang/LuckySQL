@@ -145,7 +145,14 @@ struct QueryTab: Identifiable {
 /// High-frequency editor state never publishes a workspace-wide change.
 /// Selection is native editor state; observing it would redraw on every arrow key.
 final class QueryDocument: ObservableObject {
-    @Published var sql: String
+    @Published var sql: String {
+        didSet {
+            // SQL and captured UTF-16 ranges depend on the literal text, even
+            // when Swift considers two Unicode spellings canonically equal.
+            if sql.utf8.count != oldValue.utf8.count || !(sql as NSString).isEqual(to: oldValue) { revision &+= 1 }
+        }
+    }
+    private(set) var revision = 0
     @Published var savedSQL: String?
     @Published var lineCount = 1
     var selection = NSRange(location: 0, length: 0)

@@ -48,6 +48,9 @@ plutil -insert CFBundleVersion -string "$VERSION" "$INFO_PLIST"
 plutil -insert LSMinimumSystemVersion -string 14.0 "$INFO_PLIST"
 plutil -insert NSHighResolutionCapable -bool true "$INFO_PLIST"
 plutil -insert NSPrincipalClass -string NSApplication "$INFO_PLIST"
+# Local AI endpoints can use loopback HTTP; remote endpoints remain HTTPS-only
+# in AIConfiguration. Declare local loads without disabling ATS globally.
+plutil -insert NSAppTransportSecurity -json '{"NSAllowsLocalNetworking":true}' "$INFO_PLIST"
 
 # No Developer ID certificate is required for local builds. The ad-hoc signature
 # keeps the bundle internally consistent while making its unsigned status clear.

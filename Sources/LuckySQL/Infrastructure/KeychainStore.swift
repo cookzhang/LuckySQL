@@ -8,8 +8,10 @@ protocol PasswordStoring: Sendable {
 }
 
 actor KeychainStore: PasswordStoring {
-    private let service = "app.luckysql.connection-password"
+    private let service: String
     private static let interactionLock = NSLock()
+
+    init(service: String = "app.luckysql.connection-password") { self.service = service }
 
     /// Existing installs use the macOS file-based keychain, not Data Protection.
     /// Scope its process-wide UI policy to a synchronous, serialized operation.

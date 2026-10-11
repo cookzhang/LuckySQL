@@ -232,26 +232,34 @@ final class MySQLSession: DatabaseSession, @unchecked Sendable {
     }
 
     func structure(in table: DatabaseTable) async throws -> TableStructure {
+        try Task.checkCancellation()
         let version = generation()
         let qualified = "\(try SQLIdentifier.quote(table.schema)).\(try SQLIdentifier.quote(table.name))"
         let columns = try await columns(in: table)
+        try Task.checkCancellation()
         try checkGeneration(version)
         let schema = try SQLStringLiteral.quote(table.schema)
         let name = try SQLStringLiteral.quote(table.name)
+        try Task.checkCancellation()
         let indexes = try await query("""
         SELECT INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME, COLLATION, CARDINALITY, SUB_PART, INDEX_TYPE, INDEX_COMMENT
         FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = \(schema) AND TABLE_NAME = \(name)
         ORDER BY INDEX_NAME, SEQ_IN_INDEX
         """)
+        try Task.checkCancellation()
         try checkGeneration(version)
+        try Task.checkCancellation()
         let foreignKeys = try await query("""
         SELECT CONSTRAINT_NAME, COLUMN_NAME, REFERENCED_TABLE_SCHEMA, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
         FROM information_schema.KEY_COLUMN_USAGE
         WHERE TABLE_SCHEMA = \(schema) AND TABLE_NAME = \(name) AND REFERENCED_TABLE_NAME IS NOT NULL
         ORDER BY CONSTRAINT_NAME, ORDINAL_POSITION
         """)
+        try Task.checkCancellation()
         try checkGeneration(version)
+        try Task.checkCancellation()
         let create = try await query("SHOW CREATE TABLE \(qualified)")
+        try Task.checkCancellation()
         try checkGeneration(version)
         return TableStructure(columns: columns, indexes: indexes, foreignKeys: foreignKeys, createSQL: create.rows.first?.dropFirst().first ?? "")
     }
