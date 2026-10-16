@@ -31,48 +31,70 @@ private struct AIAssistantSessionPanel: View {
     @ObservedObject private var configurationStore = AIConfigurationStore.shared
     let tabID: UUID
     @State private var applicationError: String?
+    @State private var conversationExpanded = true
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    contextSummary
-                    if session.includeSQL { payloadPreview }
-                    if let notice = configurationStore.storageNotice {
-                        Text(notice).font(.caption).foregroundStyle(.orange).textSelection(.enabled)
-                    }
-                    if let context = session.context { sentContext(context) }
-                    if session.isRunning {
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text("Receiving AI response…").font(.callout)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        contextSummary
+                        if session.includeSQL { payloadPreview }
+                        if let notice = configurationStore.storageNotice {
+                            Text(notice).font(.caption).foregroundStyle(.orange).textSelection(.enabled)
                         }
-                        Text("Wait for a complete suggestion before accepting SQL.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    if let error = session.errorMessage {
-                        Label { Text(error).textSelection(.enabled) } icon: {
-                            Image(systemName: "exclamationmark.triangle")
+                        if let context = session.context { sentContext(context) }
+                        if let notice = session.historyNotice {
+                            Text(notice).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                         }
-                        .font(.caption).foregroundStyle(.orange)
-                    }
-                    if let suggestion = session.suggestion, !session.isRunning {
-                        suggestionContent(suggestion)
-                    } else if !session.isRunning && session.errorMessage == nil {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Describe the query you need").font(.callout.weight(.medium))
-                            Text("AI uses table structure to suggest SQL. You review the draft and run it yourself.")
-                                .font(.caption).foregroundStyle(.secondary)
+                        conversation
+                        if session.isRunning {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 8) {
+                                    ProgressView().controlSize(.small)
+                                    Text("Receiving AI response…").font(.callout)
+                                }
+                                Text("Wait for a complete suggestion before accepting SQL.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            .id(AIAssistantScrollTarget.receiving)
+                        }
+                        if let error = session.errorMessage {
+                            Label { Text(error).textSelection(.enabled) } icon: {
+                                Image(systemName: "exclamationmark.triangle")
+                            }
+                            .font(.caption).foregroundStyle(.orange)
+                            .id(AIAssistantScrollTarget.failure)
+                        }
+                        if let suggestion = session.suggestion, !session.isRunning {
+                            suggestionContent(suggestion)
+                                .id(AIAssistantScrollTarget.reply)
+                        } else if !session.isRunning && session.errorMessage == nil {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Describe the query you need").font(.callout.weight(.medium))
+                                Text("AI uses table structure to suggest SQL. You review the draft and run it yourself.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        if let applicationError {
+                            Text(applicationError).font(.caption).foregroundStyle(.orange)
                         }
                     }
-                    if let applicationError {
-                        Text(applicationError).font(.caption).foregroundStyle(.orange)
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .onChange(of: scrollTarget, initial: true) { _, target in
+                    guard let target else { return }
+                    // Wait for the new response/status anchor to join the layout.
+                    // Streaming tokens do not change this target or move the view.
+                    Task { @MainActor in
+                        await Task.yield()
+                        guard scrollTarget == target else { return }
+                        proxy.scrollTo(target, anchor: .top)
                     }
                 }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
             Divider()
             composer
@@ -82,6 +104,13 @@ private struct AIAssistantSessionPanel: View {
             applicationError = nil
         }
         .onChange(of: session.suggestion?.id) { _, _ in applicationError = nil }
+    }
+
+    private var scrollTarget: AIAssistantScrollTarget? {
+        if session.isRunning { return .receiving }
+        if session.errorMessage != nil { return .failure }
+        if session.suggestion != nil { return .reply }
+        return nil
     }
 
     private var header: some View {
@@ -116,7 +145,7 @@ private struct AIAssistantSessionPanel: View {
             if let table = model.selectedTable {
                 Label(table.id, systemImage: "tablecells").font(.caption).textSelection(.enabled)
             }
-            Text("Table structure and server details are sent. Row data and connection passwords are excluded.")
+            Text("Table names, descriptions, selected table structures and server details are sent. Row data and connection passwords are excluded.")
                 .font(.caption).foregroundStyle(.secondary)
             if !model.isConnected {
                 Text("Connect to a database before sending an AI request.")
@@ -126,18 +155,88 @@ private struct AIAssistantSessionPanel: View {
     }
 
     private func sentContext(_ context: AIContextSnapshot) -> some View {
-        DisclosureGroup("Last Request Context") {
+        let tables = AISchemaPreviewTable.decode(context.schemaMetadata)
+        return DisclosureGroup("Last Request Context") {
             VStack(alignment: .leading, spacing: 6) {
                 if !context.connectionName.isEmpty { Text("Connection: \(context.connectionName)").font(.caption) }
                 Text("Database: \(context.database)").font(.caption)
-                ForEach(context.tableNames, id: \.self) { name in
-                    Label(name, systemImage: "tablecells").font(.caption).textSelection(.enabled)
+                if tables.isEmpty {
+                    ForEach(context.tableNames, id: \.self) { name in
+                        Label(name, systemImage: "tablecells").font(.caption).textSelection(.enabled)
+                    }
                 }
                 if context.tableNames.isEmpty { Text("No table metadata included").font(.caption).foregroundStyle(.secondary) }
                 if !context.serverVersion.isEmpty { Text("Server: \(context.serverVersion)").font(.caption) }
                 if !context.timeZone.isEmpty { Text("Session time zone: \(context.timeZone)").font(.caption) }
                 Text(LocalizedStringKey(context.sourceSQL.isEmpty ? "Current SQL was excluded" : "SQL was included"))
                     .font(.caption).foregroundStyle(.secondary)
+                if !tables.isEmpty {
+                    Divider().padding(.vertical, 3)
+                    Text("Loaded Table Structures").font(.caption.weight(.medium))
+                    ForEach(Array(tables.enumerated()), id: \.offset) { _, table in
+                        DisclosureGroup {
+                            VStack(alignment: .leading, spacing: 9) {
+                                ForEach(Array(table.columns.enumerated()), id: \.offset) { _, column in
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                            Text(column.name).font(.system(.caption, design: .monospaced))
+                                            Spacer(minLength: 0)
+                                            Text(column.type).font(.caption2).foregroundStyle(.secondary)
+                                        }
+                                        if let comment = column.comment, !comment.isEmpty {
+                                            Text(comment).font(.caption).foregroundStyle(.secondary)
+                                        }
+                                        if column.commentTruncated == true {
+                                            Text("Description truncated").font(.caption2).foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    .textSelection(.enabled)
+                                }
+                                if table.columnsTruncated == true {
+                                    Text("Only part of this table's columns was included.")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding(.vertical, 6)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(table.table).font(.system(.caption, design: .monospaced))
+                                if let comment = table.comment, !comment.isEmpty {
+                                    Text(comment).font(.caption).foregroundStyle(.secondary)
+                                }
+                                if table.commentTruncated == true {
+                                    Text("Description truncated").font(.caption2).foregroundStyle(.secondary)
+                                }
+                            }.textSelection(.enabled)
+                        }
+                    }
+                } else if !context.tableNames.isEmpty {
+                    Text("Loaded table details could not be displayed.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if !context.tableCatalog.isEmpty {
+                    Divider().padding(.vertical, 3)
+                    DisclosureGroup("Table Catalog") {
+                        LazyVStack(alignment: .leading, spacing: 9) {
+                            Text("Names and descriptions only. Full columns are loaded separately.")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Text("Catalog descriptions may be shortened.").font(.caption).foregroundStyle(.secondary)
+                            ForEach(Array(context.tableCatalog.enumerated()), id: \.offset) { _, table in
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(table.table.id)
+                                        .font(.system(.caption, design: .monospaced))
+                                    if !table.comment.isEmpty {
+                                        Text(table.comment).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }.textSelection(.enabled)
+                            }
+                            if context.catalogTruncated {
+                                Text("Only part of the table catalog was included. Reply with an exact table name to load its structure.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }.padding(.top, 6)
+                    }
+                }
             }
             .padding(.top, 6)
         }
@@ -145,11 +244,78 @@ private struct AIAssistantSessionPanel: View {
     }
 
     @ViewBuilder
+    private var conversation: some View {
+        let messages = conversationMessages
+        if !messages.isEmpty {
+            DisclosureGroup("Conversation", isExpanded: $conversationExpanded) {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(Array(messages.enumerated()), id: \.offset) { _, message in
+                        conversationEntry(message)
+                    }
+                }
+                .padding(.top, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .font(.caption.weight(.medium))
+        }
+    }
+
+    private var conversationMessages: [AIChatMessage] {
+        var messages = session.messages
+        // The latest completed reply has its own review and acceptance controls.
+        if session.suggestion != nil, messages.last?.role == .assistant { messages.removeLast() }
+        if let pendingPrompt = session.pendingPrompt, session.isRunning {
+            let intent = pendingPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? session.action.displayName : pendingPrompt
+            if messages.last?.role != .user || messages.last?.content != intent {
+                messages.append(AIChatMessage(role: .user, content: intent))
+            }
+        }
+        return messages
+    }
+
+    @ViewBuilder
+    private func conversationEntry(_ message: AIChatMessage) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(LocalizedStringKey(message.role == .user ? "You" : "AI Reply"))
+                .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+            if message.role == .user {
+                if message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text("Request sent without additional instructions.").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text(message.content).font(.callout).textSelection(.enabled)
+                }
+            } else if let reply = AIConversationPreview.decode(message.content) {
+                Text(reply.explanation).font(.callout).textSelection(.enabled)
+                if let assumptions = reply.assumptions, !assumptions.isEmpty {
+                    DisclosureGroup("Earlier Assumptions") {
+                        ForEach(Array(assumptions.enumerated()), id: \.offset) { _, assumption in
+                            Text("• " + assumption).font(.caption).textSelection(.enabled)
+                        }.padding(.top, 4)
+                    }.font(.caption)
+                }
+                if let sql = reply.sql, !sql.isEmpty {
+                    DisclosureGroup("Earlier SQL · Read Only") { sqlPreview(sql).padding(.top, 6) }
+                        .font(.caption)
+                }
+            } else {
+                Text("This earlier AI reply could not be displayed.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, 9)
+        .overlay(alignment: .leading) { Rectangle().fill(Color(nsColor: .separatorColor)).frame(width: 2) }
+    }
+
+    @ViewBuilder
     private func suggestionContent(_ suggestion: AISuggestion) -> some View {
         let current = model.isAISuggestionCurrent(suggestion)
         VStack(alignment: .leading, spacing: 12) {
-            Label("Not verified or executed", systemImage: "doc.text")
-                .font(.caption).foregroundStyle(.secondary)
+            Label("AI Reply", systemImage: "sparkles").font(.caption.weight(.medium)).foregroundStyle(.secondary)
+            if suggestion.sql != nil {
+                Label("Not verified or executed", systemImage: "doc.text")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Text(suggestion.explanation).font(.callout).textSelection(.enabled)
             if !suggestion.assumptions.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
@@ -241,7 +407,9 @@ private struct AIAssistantSessionPanel: View {
                 } else {
                     Button("Send to AI", systemImage: "arrow.up") {
                         applicationError = nil
-                        model.startAIAssistance(action: session.action, prompt: session.prompt, includeSQL: session.includeSQL)
+                        let prompt = session.prompt, action = session.action, includeSQL = session.includeSQL
+                        model.startAIAssistance(action: action, prompt: prompt, includeSQL: includeSQL)
+                        if session.isRunning { session.prompt = "" }
                     }
                     .buttonStyle(.borderedProminent).controlSize(.small).disabled(!canSend)
                 }
@@ -275,5 +443,53 @@ private struct AIAssistantSessionPanel: View {
         if !model.applyAISuggestion(suggestion, replacingSelection: replacing) {
             applicationError = NSLocalizedString("The suggestion no longer matches this query. Send a new request before applying it.", comment: "")
         }
+    }
+}
+
+private enum AIAssistantScrollTarget: Hashable {
+    case receiving, failure, reply
+}
+
+private struct AIConversationPreview: Decodable {
+    let explanation: String
+    let sql: String?
+    let assumptions: [String]?
+
+    static func decode(_ content: String) -> Self? {
+        var json = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        if json.hasPrefix("```"), json.hasSuffix("```"), let line = json.firstIndex(of: "\n") {
+            json = String(json[json.index(after: line)..<json.index(json.endIndex, offsetBy: -3)])
+        }
+        return try? JSONDecoder().decode(Self.self, from: Data(json.utf8))
+    }
+}
+
+private struct AISchemaPreviewTable: Decodable {
+    let table: String
+    let comment: String?
+    let columns: [AISchemaPreviewColumn]
+    let columnsTruncated: Bool?
+    let commentTruncated: Bool?
+
+    private enum CodingKeys: String, CodingKey {
+        case table, comment, columns
+        case columnsTruncated = "columns_truncated"
+        case commentTruncated = "comment_truncated"
+    }
+
+    static func decode(_ metadata: String) -> [Self] {
+        (try? JSONDecoder().decode([Self].self, from: Data(metadata.utf8))) ?? []
+    }
+}
+
+private struct AISchemaPreviewColumn: Decodable {
+    let name: String
+    let type: String
+    let comment: String?
+    let commentTruncated: Bool?
+
+    private enum CodingKeys: String, CodingKey {
+        case name, type, comment
+        case commentTruncated = "comment_truncated"
     }
 }

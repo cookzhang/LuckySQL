@@ -51,6 +51,7 @@ final class AppModel: ObservableObject {
     private var aiFailedQueries: [UUID: AIFailedQuery] = [:]
     private var aiServerInfo: (version: String, mode: String, timeZone: String)?
     private var aiMetadataEpoch = UUID()
+    private var aiCatalogCache: (database: String, epoch: UUID, entries: [DatabaseTableSummary])?
     @Published var isConnected = false
     @Published var isRunning = false {
         didSet { if isRunning && !oldValue { busySince = Date() }; if !isRunning { busySince = nil; busyStage = "" } }
@@ -335,7 +336,7 @@ final class AppModel: ObservableObject {
         guard !isRunning else { return }
         if let profileID { selectProfile(profileID) }
         guard let profile = selectedProfile else { return }
-        aiAssistant.invalidateConnection(); aiServerInfo = nil; aiFailedQueries = [:]
+        aiAssistant.invalidateConnection(); aiServerInfo = nil; aiCatalogCache = nil; aiFailedQueries = [:]
         let attemptID = UUID(); connectionAttemptID = attemptID
         connectingProfileID = profile.id; connectedProfileID = nil
         isConnected = false; isRunning = true; errorMessage = nil
@@ -382,7 +383,7 @@ final class AppModel: ObservableObject {
         }
     }
     func disconnect() {
-        aiAssistant.invalidateConnection(); aiServerInfo = nil; aiFailedQueries = [:]
+        aiAssistant.invalidateConnection(); aiServerInfo = nil; aiCatalogCache = nil; aiFailedQueries = [:]
         connectionTask?.cancel(); connectionTask = nil
         transferTask?.cancel(); transferTask = nil
         let transfer = transferSession; transferSession = nil; Task { await transfer?.cancel() }
@@ -1330,6 +1331,7 @@ final class AppModel: ObservableObject {
 extension AppModel {
     private func invalidateAIMetadata() {
         aiMetadataEpoch = UUID()
+        aiCatalogCache = nil
         // Foreground database work takes priority. Cancel only context gathering,
         // never a database command or a response already streaming from AI.
         aiAssistant.cancelContextRequests()
@@ -1347,13 +1349,14 @@ extension AppModel {
         assistantSession.action = action; assistantSession.includeSQL = includeSQL
         aiAssistant.start(tabID: tabID, action: action, prompt: prompt) { [weak self] in
             guard let self, self.activeTabID == tabID else { throw AIAssistanceError("The query tab changed before the request started. Try again.") }
-            return try await self.prepareAIContext(action: action)
+            return try await self.prepareAIContext(action: action, prompt: prompt)
         }
     }
 
-    func prepareAIContext(action: AIAssistantAction) async throws -> AIContextSnapshot {
+    func prepareAIContext(action: AIAssistantAction, prompt: String = "") async throws -> AIContextSnapshot {
         let tab = queryTabs[activeTabIndex], epoch = connectionAttemptID, profileID = connectedProfileID, metadataEpoch = aiMetadataEpoch
         let database = selectedDatabase, revision = tab.document.revision
+        let preferredTable = selectedTable
         let includeSQL = aiAssistant.session(for: tab.id).includeSQL
         guard action == .generate || includeSQL else { throw AIAssistanceError("Include SQL to explain or repair this statement.") }
         var sourceSQL = includeSQL ? SQLTools.executable(tab.sql, selection: tab.selection) : ""
@@ -1372,12 +1375,10 @@ extension AppModel {
             throw AIAssistanceError("Select a SQL statement first.")
         }
         guard sourceSQL.utf8.count <= 64 * 1024 else { throw AIAssistanceError("AI context is too large. Select fewer tables or a smaller SQL statement.") }
-        var selected: [DatabaseTable] = []
-        if let table = selectedTable { selected.append(table) }
-        for reference in SQLCompletion.references(sourceSQL, database: database) where !selected.contains(reference.table) {
-            selected.append(reference.table)
-        }
-        guard selected.count <= 12 else { throw AIAssistanceError("Choose at most 12 tables for an AI request.") }
+        let identity = AIContextSnapshot(workspaceID: aiWorkspaceID, profileID: profileID, connectionEpoch: epoch,
+            tabID: tab.id, documentRevision: revision, database: database, tableNames: [], sourceSQL: sourceSQL,
+            selection: selection, schemaMetadata: "[]", includesSQL: includeSQL, queryError: failure?.error)
+        let continuation = aiAssistant.continuation(for: tab.id, matching: identity)
         var notes: [String] = []
         func checkConnection() throws {
             try Task.checkCancellation()
@@ -1399,29 +1400,94 @@ extension AppModel {
                 notes.append(NSLocalizedString("Server version and session settings could not be refreshed.", comment: ""))
             }
         }
+        var catalog: [DatabaseTableSummary] = []
+        if let cached = aiCatalogCache, cached.epoch == metadataEpoch,
+           (cached.database as NSString).isEqual(to: database) {
+            catalog = cached.entries
+        } else if !database.isEmpty, isConnected, !isRunning {
+            do {
+                catalog = try await requireSession().tableSummaries(in: database)
+                try checkConnection()
+                // The directory is bounded; native navigation may already know
+                // more names. Resolve explicit answers outside that first page.
+                var knownTables = schemas.first(where: { ($0.name as NSString).isEqual(to: database) })?.tables ?? []
+                if catalog.count > 200 && knownTables.isEmpty {
+                    knownTables = try await requireSession().tables(in: database).map { DatabaseTable(schema: database, name: $0) }
+                    try checkConnection()
+                }
+                let described = Set(catalog.map { $0.table })
+                catalog.append(contentsOf: knownTables.filter { !described.contains($0) }.map { DatabaseTableSummary(table: $0) })
+                aiCatalogCache = (database, metadataEpoch, catalog)
+            } catch {
+                try checkConnection()
+                catalog = (schemas.first(where: { ($0.name as NSString).isEqual(to: database) })?.tables ?? [])
+                    .map { DatabaseTableSummary(table: $0) }
+                notes.append(NSLocalizedString("Table descriptions could not be loaded. Select or name the table you need.", comment: ""))
+            }
+        }
+        var selected: [DatabaseTable] = []
+        let references = SQLCompletion.references(sourceSQL, database: database).map(\.table)
+        guard references.count <= 12 else { throw AIAssistanceError("Choose at most 12 tables for an AI request.") }
+        func append(_ table: DatabaseTable) {
+            if selected.count < 12 && !selected.contains(table) { selected.append(table) }
+        }
+        // A bare table-name answer has priority over the previous sidebar table.
+        for table in AITableContextMatcher.matchingTables(in: catalog, prompt: prompt) { append(table) }
+        for table in references { append(table) }
+        if let table = preferredTable { append(table) }
+        let earlierRequests = continuation?.messages.filter { $0.role == .user }.map(\.content).joined(separator: "\n") ?? ""
+        for table in AITableContextMatcher.matchingTables(in: catalog, prompt: earlierRequests) { append(table) }
+        for table in continuation?.context.tables ?? [] { append(table) }
+        // Small schemas are cheap enough to describe completely. Larger ones
+        // use real name/comment matches and expose a catalog for clarification.
+        if catalog.count <= 8 { for entry in catalog { append(entry.table) } }
         var structures: [(DatabaseTable, TableStructure)] = []
         for table in selected {
             try checkConnection()
-            if let cached = structureCache[table.id] { structures.append((table, cached)); continue }
+            let comment = catalog.first(where: { $0.table == table })?.comment ?? ""
+            if var cached = structureCache[table.id] {
+                if cached.comment.isEmpty { cached.comment = comment }
+                structures.append((table, cached)); continue
+            }
             if isConnected, !isRunning {
                 do {
-                    let details = try await requireSession().structure(in: table)
+                    var details = try await requireSession().structure(in: table)
                     try checkConnection()
+                    if details.comment.isEmpty { details.comment = comment }
                     structureCache[table.id] = details; tableColumns[table.id] = details.columns
                     structures.append((table, details)); continue
                 } catch { try checkConnection() }
+                // A missing index/DDL permission must not discard readable
+                // column names and business descriptions.
+                if tableColumns[table.id] == nil {
+                    do {
+                        let columns = try await requireSession().columns(in: table)
+                        try checkConnection(); tableColumns[table.id] = columns
+                    } catch { try checkConnection() }
+                }
             }
-            if let columns = tableColumns[table.id] { structures.append((table, TableStructure(columns: columns))) }
+            if let columns = tableColumns[table.id] { structures.append((table, TableStructure(columns: columns, comment: comment))) }
             else { notes.append(String(format: NSLocalizedString("Structure unavailable for %@; do not invent its columns.", comment: ""), table.id)) }
         }
         try checkConnection()
         if aiServerInfo == nil { notes.append(NSLocalizedString("Server version is unknown. Use conservative MySQL syntax.", comment: "")) }
+        var directory = catalog
+        for (table, structure) in structures.reversed() {
+            directory.removeAll { $0.table == table }
+            directory.insert(DatabaseTableSummary(table: table, comment: structure.comment), at: 0)
+        }
+        let boundedCatalog = try AIContextBuilder.boundedCatalog(directory)
+        if boundedCatalog.truncated {
+            notes.append(NSLocalizedString("Some table descriptions were omitted. Reply with an exact table name to load its full structure.", comment: ""))
+        }
         let info = aiServerInfo
         return AIContextSnapshot(workspaceID: aiWorkspaceID, profileID: profileID, connectionEpoch: epoch,
             tabID: tab.id, documentRevision: failure?.documentRevision ?? revision, database: database,
             tableNames: structures.map { $0.0.id }, sourceSQL: sourceSQL, selection: selection,
             schemaMetadata: try AIContextBuilder.schemaMetadata(structures),
             metadataEpoch: metadataEpoch,
+            includesSQL: includeSQL, tables: structures.map { $0.0 }, tableCatalog: boundedCatalog.tables,
+            catalogTruncated: boundedCatalog.truncated,
             connectionName: profiles.first(where: { $0.id == profileID })?.name ?? "",
             serverVersion: info?.version ?? "", sqlMode: info?.mode ?? "", timeZone: info?.timeZone ?? "",
             queryError: failure?.error, notes: notes)

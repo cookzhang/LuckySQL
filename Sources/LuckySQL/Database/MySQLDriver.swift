@@ -231,6 +231,32 @@ final class MySQLSession: DatabaseSession, @unchecked Sendable {
         }
     }
 
+    func tableSummaries(in schema: String) async throws -> [DatabaseTableSummary] {
+        try Task.checkCancellation()
+        let version = generation()
+        let sql = try MySQLTableMetadata.summariesSQL(in: schema)
+        do {
+            let result = try await query(sql)
+            try Task.checkCancellation()
+            try checkGeneration(version)
+            return result.rows.enumerated().compactMap { index, row in
+                guard let name = row.first, !name.isEmpty, !result.isNull(row: index, column: 0) else { return nil }
+                let comment = row.count > 1 && !result.isNull(row: index, column: 1) ? row[1] : ""
+                return DatabaseTableSummary(table: DatabaseTable(schema: schema, name: name), comment: comment)
+            }
+        } catch {
+            try Task.checkCancellation()
+            try checkGeneration(version)
+            if error is CancellationError || error is DatabaseSessionLost { throw error }
+            // Restricted accounts may still permit SHOW FULL TABLES. Keep the
+            // table catalog useful even when optional comments are unavailable.
+            let names = try await tables(in: schema)
+            try Task.checkCancellation()
+            try checkGeneration(version)
+            return names.prefix(201).map { DatabaseTableSummary(table: DatabaseTable(schema: schema, name: $0)) }
+        }
+    }
+
     func structure(in table: DatabaseTable) async throws -> TableStructure {
         try Task.checkCancellation()
         let version = generation()
@@ -261,7 +287,17 @@ final class MySQLSession: DatabaseSession, @unchecked Sendable {
         let create = try await query("SHOW CREATE TABLE \(qualified)")
         try Task.checkCancellation()
         try checkGeneration(version)
-        return TableStructure(columns: columns, indexes: indexes, foreignKeys: foreignKeys, createSQL: create.rows.first?.dropFirst().first ?? "")
+        let comment = try await MySQLTableMetadata.readComment(for: table) { sql in
+            try Task.checkCancellation()
+            try self.checkGeneration(version)
+            let result = try await self.query(sql)
+            try Task.checkCancellation()
+            try self.checkGeneration(version)
+            return result
+        }
+        try Task.checkCancellation()
+        try checkGeneration(version)
+        return TableStructure(columns: columns, indexes: indexes, foreignKeys: foreignKeys, createSQL: create.rows.first?.dropFirst().first ?? "", comment: comment)
     }
 
     func close() async { try? await connection.close().get(); tunnel?.close() }
@@ -292,6 +328,44 @@ final class MySQLSession: DatabaseSession, @unchecked Sendable {
         if let value = data.double { return String(value) }
         if let value = data.date { return value.formatted(.iso8601) }
         return data.description
+    }
+}
+
+/// Metadata-only requests: these never select rows from the user's tables.
+enum MySQLTableMetadata {
+    static func summariesSQL(in schema: String) throws -> String {
+        """
+        SELECT `TABLE_NAME`, `TABLE_COMMENT`
+        FROM `information_schema`.`TABLES`
+        WHERE `TABLE_SCHEMA` = \(try SQLStringLiteral.quote(schema)) AND `TABLE_TYPE` IN ('BASE TABLE', 'VIEW')
+        ORDER BY `TABLE_NAME`
+        LIMIT 201
+        """
+    }
+
+    static func commentSQL(for table: DatabaseTable) throws -> String {
+        """
+        SELECT `TABLE_COMMENT` FROM `information_schema`.`TABLES`
+        WHERE `TABLE_SCHEMA` = \(try SQLStringLiteral.quote(table.schema)) AND `TABLE_NAME` = \(try SQLStringLiteral.quote(table.name))
+        LIMIT 1
+        """
+    }
+
+    static func readComment(for table: DatabaseTable, query: (String) async throws -> QueryResult) async throws -> String {
+        try Task.checkCancellation()
+        let sql = try commentSQL(for: table)
+        do {
+            let result = try await query(sql)
+            try Task.checkCancellation()
+            guard let comment = result.rows.first?.first, !result.isNull(row: 0, column: 0) else { return "" }
+            return comment
+        } catch {
+            try Task.checkCancellation()
+            if error is CancellationError || error is DatabaseSessionLost { throw error }
+            // The additional comment query must not discard columns, indexes,
+            // foreign keys or CREATE SQL that were already loaded successfully.
+            return ""
+        }
     }
 }
 

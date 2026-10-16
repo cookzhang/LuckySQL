@@ -5,6 +5,7 @@ protocol DatabaseSession: AnyObject, Sendable {
     func export(_ sql: String, to url: URL, format: TransferFormat, progress: @escaping @Sendable (Int) -> Void) async throws -> Int
     func schemas() async throws -> [String]
     func tables(in schema: String) async throws -> [String]
+    func tableSummaries(in schema: String) async throws -> [DatabaseTableSummary]
     func columns(in table: DatabaseTable) async throws -> [TableColumn]
     func structure(in table: DatabaseTable) async throws -> TableStructure
     func close() async
@@ -16,6 +17,12 @@ extension DatabaseSession {
     func export(_ sql: String, to url: URL, format: TransferFormat, progress: @escaping @Sendable (Int) -> Void) async throws -> Int { throw UpdateFailure("This driver does not support streaming export.") }
     func cancel() async { await close() }
     func cancelQuery() async throws { throw QueryCancellationUnavailable() }
+    func tableSummaries(in schema: String) async throws -> [DatabaseTableSummary] {
+        try Task.checkCancellation()
+        let names = try await tables(in: schema)
+        try Task.checkCancellation()
+        return names.map { DatabaseTableSummary(table: DatabaseTable(schema: schema, name: $0)) }
+    }
     func structure(in table: DatabaseTable) async throws -> TableStructure {
         TableStructure(columns: try await columns(in: table))
     }

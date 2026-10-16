@@ -85,7 +85,7 @@ The integration test also verifies the 1,000-row server-side limit, smaller expl
 To create a distributable Apple Silicon app bundle locally:
 
 ```sh
-./scripts/package-release.sh 0.5.0
+./scripts/package-release.sh 0.5.1
 ```
 
 The archive and its SHA-256 checksum are written to `dist/`.
@@ -98,7 +98,9 @@ Choose **LuckySQL → AI Configuration…** (or the assistant's gear button). Se
 
 Open **AI Assistant** in the editor or press **⌘K**. Generate a query from the selected table's structure, explain the current selection/statement, or choose **Repair with AI…** on a failed query. Opening the panel does not send a request. Review the SQL/error disclosure and click **Send to AI**. Requests include selected/referenced schema metadata and server version/session settings; row previews and database credentials are excluded. SQL is optional for generation and required for explanation/repair, so literals and query errors may be sent when included.
 
-Completed suggestions can be copied, opened in a new query, or used to replace the original selection with one undoable edit. They never execute automatically; normal read-only protection and execution confirmation still apply. Editing the source draft, changing connections/databases, executing SQL, or refreshing schema metadata makes old suggestions inapplicable. Stop cancels only the AI request. Conversations remain in memory per query tab and can be cleared; closing a tab or changing its connection clears them. If Keychain cannot save the key, LuckySQL explicitly retains it only for the current app session.
+Answer clarifying questions in the same conversation. Replying with a real table name loads its structure and descriptions, while preserving the original request and earlier answers. The assistant also matches available table names/descriptions to the request and describes small schemas together. The context disclosure distinguishes the table-name/description catalog from tables whose full columns were loaded, including table and field comments. Large catalogs and descriptions are bounded and indicate truncation.
+
+Completed suggestions can be copied, opened in a new query, or used to replace the original selection with one undoable edit. They never execute automatically; normal read-only protection and execution confirmation still apply. Editing the source draft, changing connections/databases, executing SQL, or refreshing schema metadata makes old suggestions inapplicable. Enriching table context does not reset the conversation; connection, database, provider/model or shared SQL changes restart it with a notice. Stop cancels only the AI request. Conversations remain in memory per query tab and can be cleared; closing a tab or changing its connection clears them. Failed/stopped requests restore an empty composer for retry, including after switching tabs or hiding the panel. If Keychain cannot save the key, LuckySQL explicitly retains it only for the current app session.
 
 ## Project layout
 
