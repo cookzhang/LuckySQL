@@ -318,3 +318,24 @@
 "The AI response exceeded the stream size limit." = "AI 响应超过流式传输大小限制。";
 "The AI suggestion exceeded the text size limit." = "AI 建议超过文本大小限制。";
 "Unable to reach the AI service. Check the endpoint and network connection." = "无法访问 AI 服务，请检查接口地址及网络连接。";
+
+/* AI follow-up conversation and inspectable table context */
+"Table names, descriptions, selected table structures and server details are sent. Row data and connection passwords are excluded." = "会发送表名、说明、选中表的结构及服务器信息，不发送表内数据或连接密码。";
+"Loaded Table Structures" = "已加载的表结构";
+"Description truncated" = "说明已截断";
+"Only part of this table's columns was included." = "仅包含此表的部分列。";
+"Loaded table details could not be displayed." = "无法显示已加载的表结构详情。";
+"Table Catalog" = "表目录";
+"Names and descriptions only. Full columns are loaded separately." = "此处仅包含表名及说明，字段详情按需另外加载。";
+"Catalog descriptions may be shortened." = "目录中的表说明可能经过截短。";
+"Only part of the table catalog was included. Reply with an exact table name to load its structure." = "仅包含部分表目录。请回复准确表名，以加载该表结构。";
+"Conversation" = "对话记录";
+"You" = "你";
+"AI Reply" = "AI 回复";
+"Request sent without additional instructions." = "本次请求未附加其他说明。";
+"Earlier Assumptions" = "此前的假设";
+"Earlier SQL · Read Only" = "此前的 SQL · 只读";
+"This earlier AI reply could not be displayed." = "无法显示这条此前的 AI 回复。";
+"Conversation restarted because the connection, database, model or shared SQL changed." = "连接、数据库、模型或已发送的 SQL 已改变，对话已重新开始。";
+"Some table descriptions were omitted. Reply with an exact table name to load its full structure." = "部分表说明未包含在上下文中。请回复准确表名，以加载该表的完整结构。";
+"Table descriptions could not be loaded. Select or name the table you need." = "无法加载表说明，请选择所需的表或提供准确表名。";

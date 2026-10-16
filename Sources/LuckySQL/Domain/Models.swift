@@ -54,6 +54,11 @@ struct DatabaseTable: Identifiable, Hashable, Sendable, Codable {
     let name: String
 }
 
+struct DatabaseTableSummary: Sendable {
+    let table: DatabaseTable
+    var comment: String = ""
+}
+
 struct TableColumn: Identifiable, Hashable, Sendable {
     var id: String { name }
     let name: String
@@ -175,6 +180,7 @@ struct TableStructure: Sendable {
     var indexes = QueryResult.empty
     var foreignKeys = QueryResult.empty
     var createSQL = ""
+    var comment = ""
 }
 
 enum FilterOperator: String, CaseIterable {
